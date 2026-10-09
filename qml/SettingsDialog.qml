@@ -6,31 +6,17 @@ import QtQuick.Layouts
 import QtQuick.Window
 import FishUI as FishUI
 
-FishUI.Window {
+FishUI.DialogWindow {
     id: control
     objectName: "settingsDialog"
 
     title: qsTr("Settings")
 
     readonly property int dialogWidth: 420
-    readonly property int dialogHeight: mainLayout.implicitHeight + header.height + FishUI.Units.largeSpacing * 1.5
+    contentHeight: mainLayout.implicitHeight + contentPadding
 
     width: dialogWidth
-    height: dialogHeight
-    minimumWidth: dialogWidth
-    maximumWidth: dialogWidth
-    minimumHeight: dialogHeight
-    maximumHeight: dialogHeight
 
-    flags: Qt.Dialog | Qt.FramelessWindowHint
-    modality: Qt.WindowModal
-    visible: false
-    minimizeButtonVisible: false
-    header.height: 44
-    windowButtonsAlignment: Qt.AlignVCenter
-    windowButtonsTopMargin: 0
-    windowButtonsRightMargin: FishUI.Units.smallSpacing
-    restorationBehavior: FishUI.Window.Disabled
     background.color: FishUI.Theme.backgroundColor
 
     readonly property color separatorColor: Qt.alpha(FishUI.Theme.textColor, 0.08)
@@ -42,23 +28,13 @@ FishUI.Window {
         onActivated: control.close()
     }
 
-    headerItem: Item {
-        FishUI.Label {
-            anchors.centerIn: parent
-            anchors.horizontalCenterOffset: (control.width - parent.width) / 2
-            text: control.title
-            font.pixelSize: 13
-            font.weight: Font.Medium
-        }
-    }
-
     ColumnLayout {
         id: mainLayout
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.leftMargin: FishUI.Units.largeSpacing * 1.5
-        anchors.rightMargin: FishUI.Units.largeSpacing * 1.5
+        anchors.leftMargin: control.contentPadding
+        anchors.rightMargin: control.contentPadding
         spacing: FishUI.Units.largeSpacing
 
         FishUI.RoundedRectangle {

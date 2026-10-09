@@ -8,7 +8,7 @@ import QtQuick.Window
 import FishUI as FishUI
 import "Dates.js" as Dates
 
-FishUI.Window {
+FishUI.DialogWindow {
     id: control
     objectName: "eventDialog"
 
@@ -22,24 +22,10 @@ FishUI.Window {
     title: isNew ? qsTr("New Event") : qsTr("Edit Event")
 
     readonly property int dialogWidth: 480
-    readonly property int dialogHeight: mainLayout.implicitHeight + header.height + 24
+    contentHeight: mainLayout.implicitHeight + 24
 
     width: dialogWidth
-    height: dialogHeight
-    minimumWidth: dialogWidth
-    maximumWidth: dialogWidth
-    minimumHeight: dialogHeight
-    maximumHeight: dialogHeight
 
-    flags: Qt.Dialog | Qt.FramelessWindowHint
-    modality: Qt.WindowModal
-    visible: false
-    minimizeButtonVisible: false
-    header.height: 44
-    windowButtonsAlignment: Qt.AlignVCenter
-    windowButtonsTopMargin: 0
-    windowButtonsRightMargin: FishUI.Units.smallSpacing
-    restorationBehavior: FishUI.Window.Disabled
     background.color: FishUI.Theme.backgroundColor
     color: background.color
 
@@ -328,23 +314,13 @@ FishUI.Window {
         Accessible.name: editText
     }
 
-    headerItem: Item {
-        FishUI.Label {
-            anchors.centerIn: parent
-            anchors.horizontalCenterOffset: (control.width - parent.width) / 2
-            text: control.title
-            font.pixelSize: 13
-            font.weight: Font.Medium
-        }
-    }
-
     ColumnLayout {
         id: mainLayout
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.leftMargin: 18
-        anchors.rightMargin: 18
+        anchors.leftMargin: control.contentPadding
+        anchors.rightMargin: control.contentPadding
         spacing: 12
 
         Card {
