@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Calendar Reminders
+Exec=cutefish-calendar-reminders
+TryExec=cutefish-calendar-reminders
+NoDisplay=true
+OnlyShowIn=Cutefish;
