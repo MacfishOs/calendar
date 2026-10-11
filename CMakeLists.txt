@@ -23,17 +23,18 @@ add_library(calendar-core STATIC
     src/timezones.cpp
 )
 target_include_directories(calendar-core PUBLIC src)
+# Linked into the application module.
+set_target_properties(calendar-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(calendar-core PUBLIC Qt6::Core Qt6::Gui Qt6::Concurrent PkgConfig::LIBICAL)
 
-add_executable(${PROJECT_NAME}
+cutefish_add_application(${PROJECT_NAME} SOURCES
     src/main.cpp
     src/application.cpp
     resources.qrc
 )
-target_compile_definitions(${PROJECT_NAME} PRIVATE CALENDAR_VERSION="${PROJECT_VERSION}")
-target_link_libraries(${PROJECT_NAME} PRIVATE
+target_compile_definitions(${PROJECT_NAME}-module PRIVATE CALENDAR_VERSION="${PROJECT_VERSION}")
+target_link_libraries(${PROJECT_NAME}-module PRIVATE
     calendar-core
-    Cutefish::Application
     Qt6::Gui
     Qt6::Quick
     Qt6::QuickControls2
@@ -50,7 +51,7 @@ target_link_libraries(cutefish-calendar-reminders PRIVATE
     Qt6::DBus
 )
 
-install(TARGETS ${PROJECT_NAME} cutefish-calendar-reminders RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS cutefish-calendar-reminders RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES cutefish-calendar.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES cutefish-calendar-reminders.desktop DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/xdg/autostart)
 
