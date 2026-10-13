@@ -1081,13 +1081,16 @@ void EventFile::setData(const EventData &data)
 
     const bool kindChanged = before.allDay != after.allDay;
     const bool ruleChanged = data.repeat.frequency != Repeat::Custom && !(data.repeat == oldRepeat);
+    // A new end alone keeps the same occurrences, and so their changes and removals.
+    const bool frequencyChanged = ruleChanged && data.repeat.frequency != oldRepeat.frequency;
     if (ruleChanged) {
         removeProperties(event, ICAL_RRULE_PROPERTY);
         if (data.repeat.frequency == Repeat::None)
             removeProperties(event, ICAL_RDATE_PROPERTY);
         else
             icalcomponent_add_property(event, icalproperty_new_rrule(ruleFor(data.repeat, after)));
-    } else if (!kindChanged && !before.start.isNull()) {
+    }
+    if (!frequencyChanged && !kindChanged && !before.start.isNull()) {
         // The instances moved with the start: so do the ones that were changed or removed.
         const qint64 seconds = before.allDay ? 0 : toDateTime(before.start).secsTo(toDateTime(after.start));
         const int days = before.allDay ? dateOf(before.start.wall).daysTo(dateOf(after.start.wall)) : 0;
@@ -1106,7 +1109,7 @@ void EventFile::setData(const EventData &data)
     }
 
     // Instances of another rule, or of another kind of start, are not these instances.
-    if (ruleChanged || kindChanged) {
+    if (frequencyChanged || kindChanged) {
         removeProperties(event, ICAL_EXDATE_PROPERTY);
         QList<icalcomponent *> stale;
         for (icalcomponent *other : components(m_calendar, ICAL_VEVENT_COMPONENT)) {

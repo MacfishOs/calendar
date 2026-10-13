@@ -337,6 +337,14 @@ void CoreTest::moveSeriesShiftsChanges()
     QCOMPARE(month.at(1).summary, QStringLiteral("Special"));
     QCOMPARE(month.at(2).start, QDateTime(QDate(2026, 10, 27), QTime(8, 0)));
 
+    // A new end keeps the same occurrences, changed and removed ones too.
+    moved.repeat.until = QDate(2026, 12, 31);
+    file->setData(moved);
+    month = expand(*file, QDate(2026, 10, 1), QDate(2026, 11, 1));
+    QCOMPARE(month.size(), 3);
+    QCOMPARE(month.at(1).summary, QStringLiteral("Special"));
+    QCOMPARE(expand(*file, QDate(2027, 1, 1), QDate(2027, 2, 1)).size(), 0);
+
     // Another rule makes other occurrences: changes to the old ones go.
     moved.repeat.frequency = Repeat::Daily;
     file->setData(moved);

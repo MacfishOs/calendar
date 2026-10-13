@@ -216,6 +216,8 @@ FishUI.Window {
         // A new rule or kind of event cannot apply to one occurrence alone.
         const seriesOnly = data.repeat !== original.repeat || data.allDay !== original.allDay
                 || data.repeatEnd !== original.repeatEnd
+                || (data.repeatEnd === 1 && !Dates.sameDay(data.repeatUntil, original.repeatUntil))
+                || (data.repeatEnd === 2 && data.repeatCount !== original.repeatCount)
         askScope({
             title: qsTr("Save changes to this repeating event?"),
             text: seriesOnly ? qsTr("The new repeat applies to this and the following events.")
