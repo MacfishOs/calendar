@@ -2,54 +2,48 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "calendarstore.h"
+#include "sha1.h"
+#include "text.h"
+#include "trash.h"
+#include "uuid.h"
 
-#include <QCollator>
-#include <QCryptographicHash>
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QFileSystemWatcher>
-#include <QFutureWatcher>
-#include <QRegularExpression>
-#include <QSaveFile>
-#include <QStandardPaths>
-#include <QUuid>
-#include <QtConcurrent>
+#include <base/file.h>
+#include <base/paths.h>
 
-static QString readSmallFile(const QString &path)
+#include <algorithm>
+#include <regex>
+
+namespace fs = std::filesystem;
+namespace base = cutefish::base;
+
+static const Rgb DefaultColor{0x3c, 0x81, 0xf6};
+
+static std::string readSmallFile(const std::string& path)
 {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
-        return {};
-    return QString::fromUtf8(file.read(4096)).trimmed();
+    const std::optional<std::string> contents = base::file::read(path);
+    return contents ? trimmed(std::string_view(*contents).substr(0, 4096)) : std::string();
 }
 
-static bool writeSmallFile(const QString &path, const QString &text)
+static bool writeSmallFile(const std::string& path, const std::string& text)
 {
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly))
-        return false;
-    file.write(text.toUtf8() + '\n');
-    return file.commit();
+    return base::file::writeAtomically(path, text + '\n');
 }
 
-CalendarStore::CalendarStore(const QString &root, QObject *parent)
-    : QObject(parent)
-    , m_root(root)
+CalendarStore::CalendarStore(std::string root)
+    : m_root(std::move(root))
 {
     m_rescan.setSingleShot(true);
-    m_rescan.setInterval(250);
-    connect(&m_rescan, &QTimer::timeout, this, [this] {
+    m_rescan.setInterval(std::chrono::milliseconds(250));
+    m_rescan.onTimeout = [this] {
         apply(scan(m_root, m_events));
-    });
+    };
 }
 
 CalendarStore::~CalendarStore() = default;
 
-QString CalendarStore::defaultRoot()
+std::string CalendarStore::defaultRoot()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
-            + QStringLiteral("/cutefish-calendar/calendars");
+    return base::paths::dataHome() + "/cutefish-calendar/calendars";
 }
 
 CalendarStore::Entry CalendarStore::makeEntry(std::shared_ptr<const EventFile> file)
@@ -57,52 +51,58 @@ CalendarStore::Entry CalendarStore::makeEntry(std::shared_ptr<const EventFile> f
     Entry entry;
     entry.recurring = file->isRecurring();
     if (!entry.recurring) {
-        QList<Occurrence> occurrences;
-        file->expand(QDate(1, 1, 1), QDate(9999, 12, 31), &occurrences);
-        if (!occurrences.isEmpty()) {
-            entry.firstDay = occurrences.first().firstDay;
-            entry.lastDay = occurrences.first().lastDay;
+        std::vector<Occurrence> occurrences;
+        file->expand(Date(1, 1, 1), Date(9999, 12, 31), &occurrences);
+        if (!occurrences.empty()) {
+            entry.firstDay = occurrences.front().firstDay;
+            entry.lastDay = occurrences.front().lastDay;
         }
     }
     entry.file = std::move(file);
     return entry;
 }
 
-CalendarStore::Snapshot CalendarStore::scan(const QString &root, const QHash<QString, Entry> &known)
+CalendarStore::Snapshot CalendarStore::scan(const std::string& root, const std::unordered_map<std::string, Entry>& known)
 {
     Snapshot snapshot;
-    const QDir rootDir(root);
-    const QStringList ids = rootDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QString &id : ids) {
-        const QString path = rootDir.filePath(id);
+    std::error_code error;
+    for (const fs::directory_entry& directory : fs::directory_iterator(root, error)) {
+        if (!directory.is_directory(error))
+            continue;
+        const std::string id = directory.path().filename().string();
+        if (id.starts_with('.'))
+            continue;
+        const std::string path = directory.path().string();
         CalendarInfo info;
         info.id = id;
-        info.name = readSmallFile(path + QStringLiteral("/displayname"));
-        if (info.name.isEmpty())
+        info.name = readSmallFile(path + "/displayname");
+        if (info.name.empty())
             info.name = id;
-        info.color = QColor(readSmallFile(path + QStringLiteral("/color")).left(7));
-        if (!info.color.isValid())
-            info.color = QColor(0x3c, 0x81, 0xf6);
-        snapshot.calendars.insert(id, info);
+        info.color = Rgb::fromName(std::string_view(readSmallFile(path + "/color")).substr(0, 7)).value_or(DefaultColor);
+        snapshot.calendars.emplace(id, info);
 
-        const QFileInfoList files = QDir(path).entryInfoList({ QStringLiteral("*.ics") }, QDir::Files);
-        for (const QFileInfo &fileInfo : files) {
-            const QString key = id + QLatin1Char('/') + fileInfo.fileName();
-            const auto it = known.constFind(key);
-            if (it != known.constEnd() && it->modified == fileInfo.lastModified() && it->size == fileInfo.size()) {
-                snapshot.events.insert(key, *it);
+        for (const fs::directory_entry& file : fs::directory_iterator(path, error)) {
+            const std::string name = file.path().filename().string();
+            if (name.starts_with('.') || file.path().extension() != ".ics" || !file.is_regular_file(error))
+                continue;
+            const std::string key = id + '/' + name;
+            const fs::file_time_type modified = file.last_write_time(error);
+            const uintmax_t size = file.file_size(error);
+            const auto it = known.find(key);
+            if (it != known.end() && it->second.modified == modified && it->second.size == size) {
+                snapshot.events.emplace(key, it->second);
                 continue;
             }
-            QFile file(fileInfo.filePath());
-            if (!file.open(QIODevice::ReadOnly))
+            const std::optional<std::string> data = base::file::read(file.path().string());
+            if (!data)
                 continue;
-            std::shared_ptr<const EventFile> event = EventFile::fromData(file.readAll());
+            std::shared_ptr<const EventFile> event = EventFile::fromData(*data);
             if (!event)
                 continue;
             Entry entry = makeEntry(std::move(event));
-            entry.modified = fileInfo.lastModified();
-            entry.size = fileInfo.size();
-            snapshot.events.insert(key, entry);
+            entry.modified = modified;
+            entry.size = size;
+            snapshot.events.emplace(key, entry);
         }
     }
     return snapshot;
@@ -115,12 +115,8 @@ void CalendarStore::load()
 
 void CalendarStore::loadAsync()
 {
-    auto *watcher = new QFutureWatcher<Snapshot>(this);
-    connect(watcher, &QFutureWatcher<Snapshot>::finished, this, [this, watcher] {
-        apply(watcher->result());
-        watcher->deleteLater();
-    });
-    watcher->setFuture(QtConcurrent::run(&CalendarStore::scan, m_root, QHash<QString, Entry>()));
+    m_scan = base::runInThread([root = m_root] { return scan(root, {}); },
+                               [this](Snapshot snapshot) { apply(std::move(snapshot)); });
 }
 
 void CalendarStore::apply(Snapshot snapshot)
@@ -130,213 +126,233 @@ void CalendarStore::apply(Snapshot snapshot)
     watch();
     if (!m_ready) {
         m_ready = true;
-        Q_EMIT readyChanged();
+        readyChanged.emit();
     }
-    Q_EMIT changed();
+    emitChanged();
+}
+
+void CalendarStore::emitChanged()
+{
+    if (!m_batching)
+        changed.emit();
 }
 
 void CalendarStore::watch()
 {
-    if (!m_watcher) {
-        QDir().mkpath(m_root);
-        m_watcher = new QFileSystemWatcher(this);
-        connect(m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] {
+    std::error_code error;
+    fs::create_directories(m_root, error);
+    std::vector<std::string> paths{m_root};
+    for (const auto& [id, info] : m_calendars)
+        paths.push_back(m_root + '/' + id);
+
+    for (auto it = m_watches.begin(); it != m_watches.end();) {
+        if (std::find(paths.begin(), paths.end(), it->first) == paths.end())
+            it = m_watches.erase(it);
+        else
+            ++it;
+    }
+    for (const std::string& path : paths) {
+        if (m_watches.contains(path))
+            continue;
+        m_watches.emplace(path, base::FileWatch::directory(path, [this](const std::string&) {
             m_rescan.start();
-        });
-    }
-    QStringList paths { m_root };
-    for (const QString &id : m_calendars.keys())
-        paths.append(m_root + QLatin1Char('/') + id);
-    const QStringList watched = m_watcher->directories();
-    for (const QString &path : watched) {
-        if (!paths.contains(path))
-            m_watcher->removePath(path);
-    }
-    for (const QString &path : std::as_const(paths)) {
-        if (!watched.contains(path))
-            m_watcher->addPath(path);
+        }));
     }
 }
 
-QList<CalendarInfo> CalendarStore::calendars() const
+std::vector<CalendarInfo> CalendarStore::calendars() const
 {
-    QList<CalendarInfo> list = m_calendars.values();
-    QCollator collator;
-    collator.setNumericMode(true);
-    collator.setCaseSensitivity(Qt::CaseInsensitive);
-    std::sort(list.begin(), list.end(), [&collator](const CalendarInfo &a, const CalendarInfo &b) {
-        return collator.compare(a.name, b.name) < 0;
+    std::vector<CalendarInfo> list;
+    list.reserve(m_calendars.size());
+    for (const auto& [id, info] : m_calendars)
+        list.push_back(info);
+    std::sort(list.begin(), list.end(), [](const CalendarInfo& a, const CalendarInfo& b) {
+        const int order = naturalCompare(a.name, b.name);
+        return order != 0 ? order < 0 : a.id < b.id;
     });
     return list;
 }
 
-QString CalendarStore::createCalendar(const QString &name, const QColor &color)
+CalendarInfo CalendarStore::calendar(const std::string& id) const
 {
-    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const QString path = m_root + QLatin1Char('/') + id;
-    if (!QDir().mkpath(path))
+    const auto it = m_calendars.find(id);
+    return it == m_calendars.end() ? CalendarInfo() : it->second;
+}
+
+std::string CalendarStore::createCalendar(const std::string& name, Rgb color)
+{
+    const std::string id = createUuid();
+    const std::string path = m_root + '/' + id;
+    std::error_code error;
+    fs::create_directories(path, error);
+    if (error)
         return {};
-    CalendarInfo info { id, name, color };
-    writeSmallFile(path + QStringLiteral("/displayname"), name);
-    writeSmallFile(path + QStringLiteral("/color"), color.name(QColor::HexRgb).toUpper());
-    m_calendars.insert(id, info);
+    writeSmallFile(path + "/displayname", name);
+    writeSmallFile(path + "/color", color.name());
+    m_calendars[id] = CalendarInfo{id, name, color};
     watch();
-    Q_EMIT changed();
+    emitChanged();
     return id;
 }
 
-bool CalendarStore::updateCalendar(const QString &id, const QString &name, const QColor &color)
+bool CalendarStore::updateCalendar(const std::string& id, const std::string& name, Rgb color)
 {
     if (!m_calendars.contains(id))
         return false;
-    const QString path = m_root + QLatin1Char('/') + id;
-    if (!writeSmallFile(path + QStringLiteral("/displayname"), name)
-            || !writeSmallFile(path + QStringLiteral("/color"), color.name(QColor::HexRgb).toUpper()))
+    const std::string path = m_root + '/' + id;
+    if (!writeSmallFile(path + "/displayname", name) || !writeSmallFile(path + "/color", color.name()))
         return false;
-    m_calendars[id] = { id, name, color };
-    Q_EMIT changed();
+    m_calendars[id] = CalendarInfo{id, name, color};
+    emitChanged();
     return true;
 }
 
-bool CalendarStore::removeCalendar(const QString &id)
+bool CalendarStore::removeCalendar(const std::string& id)
 {
     if (!m_calendars.contains(id))
         return false;
-    const QString path = m_root + QLatin1Char('/') + id;
-    if (!QFile::moveToTrash(path) && !QDir(path).removeRecursively())
+    const std::string path = m_root + '/' + id;
+    std::error_code error;
+    if (!moveToTrash(path) && (fs::remove_all(path, error), error))
         return false;
-    m_calendars.remove(id);
-    m_events.removeIf([&id](const QHash<QString, Entry>::iterator it) {
-        return calendarOf(it.key()) == id;
+    m_calendars.erase(id);
+    std::erase_if(m_events, [&id](const auto& item) {
+        return calendarOf(item.first) == id;
     });
     watch();
-    Q_EMIT changed();
+    emitChanged();
     return true;
 }
 
-int CalendarStore::eventCount(const QString &calendarId) const
+int CalendarStore::eventCount(const std::string& calendarId) const
 {
     int count = 0;
-    for (auto it = m_events.constBegin(); it != m_events.constEnd(); ++it) {
-        if (calendarOf(it.key()) == calendarId)
+    for (const auto& [key, entry] : m_events) {
+        if (calendarOf(key) == calendarId)
             ++count;
     }
     return count;
 }
 
-QList<Occurrence> CalendarStore::occurrences(QDate from, QDate to, const QSet<QString> &hiddenCalendars) const
+std::vector<Occurrence> CalendarStore::occurrences(Date from, Date to,
+                                                   const std::unordered_set<std::string>& hiddenCalendars) const
 {
-    QList<Occurrence> result;
-    for (auto it = m_events.constBegin(); it != m_events.constEnd(); ++it) {
-        const QString calendarId = calendarOf(it.key());
+    std::vector<Occurrence> result;
+    for (const auto& [key, entry] : m_events) {
+        const std::string calendarId = calendarOf(key);
         if (hiddenCalendars.contains(calendarId) || !m_calendars.contains(calendarId))
             continue;
-        const Entry &entry = it.value();
         if (!entry.recurring && (!entry.firstDay.isValid() || entry.firstDay >= to || entry.lastDay < from))
             continue;
-        const qsizetype start = result.size();
+        const size_t start = result.size();
         entry.file->expand(from, to, &result);
-        for (qsizetype i = start; i < result.size(); ++i) {
-            result[i].key = it.key();
+        for (size_t i = start; i < result.size(); ++i) {
+            result[i].key = key;
             result[i].calendarId = calendarId;
         }
     }
     return result;
 }
 
-const EventFile *CalendarStore::event(const QString &key) const
+std::vector<std::string> CalendarStore::keys() const
 {
-    const auto it = m_events.constFind(key);
-    return it == m_events.constEnd() ? nullptr : it->file.get();
+    std::vector<std::string> list;
+    list.reserve(m_events.size());
+    for (const auto& [key, entry] : m_events)
+        list.push_back(key);
+    return list;
 }
 
-QString CalendarStore::calendarOf(const QString &key)
+const EventFile* CalendarStore::event(const std::string& key) const
 {
-    return key.section(QLatin1Char('/'), 0, 0);
+    const auto it = m_events.find(key);
+    return it == m_events.end() ? nullptr : it->second.file.get();
 }
 
-QString CalendarStore::pathOf(const QString &key) const
+std::string CalendarStore::calendarOf(const std::string& key)
 {
-    return m_root + QLatin1Char('/') + key;
+    return key.substr(0, key.find('/'));
 }
 
-QString CalendarStore::fileNameFor(const QString &calendarId, const QString &uid) const
+std::string CalendarStore::pathOf(const std::string& key) const
 {
-    static const QRegularExpression safe(QStringLiteral("^[A-Za-z0-9@._-]{1,96}$"));
-    QString base = safe.match(uid).hasMatch() ? uid
-            : QString::fromLatin1(QCryptographicHash::hash(uid.toUtf8(), QCryptographicHash::Sha1).toHex());
-    QString name = base + QStringLiteral(".ics");
-    for (int i = 2; m_events.contains(calendarId + QLatin1Char('/') + name); ++i)
-        name = base + QLatin1Char('-') + QString::number(i) + QStringLiteral(".ics");
+    return m_root + '/' + key;
+}
+
+std::string CalendarStore::fileNameFor(const std::string& calendarId, const std::string& uid) const
+{
+    static const std::regex safe("^[A-Za-z0-9@._-]{1,96}$");
+    const std::string base = std::regex_match(uid, safe) ? uid : sha1Hex(uid);
+    std::string name = base + ".ics";
+    for (int i = 2; m_events.contains(calendarId + '/' + name); ++i)
+        name = base + '-' + std::to_string(i) + ".ics";
     return name;
 }
 
-bool CalendarStore::write(const QString &key, const EventFile &file)
+bool CalendarStore::write(const std::string& key, const EventFile& file)
 {
-    QSaveFile out(pathOf(key));
-    if (!out.open(QIODevice::WriteOnly))
-        return false;
-    out.write(file.toData());
-    if (!out.commit())
-        return false;
-    return true;
+    return base::file::writeAtomically(pathOf(key), file.toData());
 }
 
-QString CalendarStore::addEvent(const QString &calendarId, std::unique_ptr<EventFile> file)
+void CalendarStore::stamp(const std::string& key, Entry* entry) const
+{
+    std::error_code error;
+    entry->modified = fs::last_write_time(pathOf(key), error);
+    entry->size = fs::file_size(pathOf(key), error);
+}
+
+std::string CalendarStore::addEvent(const std::string& calendarId, std::unique_ptr<EventFile> file)
 {
     if (!m_calendars.contains(calendarId) || !file)
         return {};
-    const QString key = calendarId + QLatin1Char('/') + fileNameFor(calendarId, file->uid());
+    const std::string key = calendarId + '/' + fileNameFor(calendarId, file->uid());
     if (!write(key, *file))
         return {};
     Entry entry = makeEntry(std::move(file));
-    const QFileInfo info(pathOf(key));
-    entry.modified = info.lastModified();
-    entry.size = info.size();
-    m_events.insert(key, entry);
-    Q_EMIT changed();
+    stamp(key, &entry);
+    m_events[key] = std::move(entry);
+    emitChanged();
     return key;
 }
 
-QString CalendarStore::updateEvent(const QString &key, std::unique_ptr<EventFile> file)
+std::string CalendarStore::updateEvent(const std::string& key, std::unique_ptr<EventFile> file)
 {
     if (!m_events.contains(key) || !file || !write(key, *file))
         return {};
     Entry entry = makeEntry(std::move(file));
-    const QFileInfo info(pathOf(key));
-    entry.modified = info.lastModified();
-    entry.size = info.size();
-    m_events.insert(key, entry);
-    Q_EMIT changed();
+    stamp(key, &entry);
+    m_events[key] = std::move(entry);
+    emitChanged();
     return key;
 }
 
-QString CalendarStore::moveEvent(const QString &key, const QString &calendarId)
+std::string CalendarStore::moveEvent(const std::string& key, const std::string& calendarId)
 {
-    const EventFile *file = event(key);
+    const EventFile* file = event(key);
     if (!file || !m_calendars.contains(calendarId))
         return {};
     if (calendarOf(key) == calendarId)
         return key;
-    const QString moved = addEvent(calendarId, file->clone());
-    if (moved.isEmpty())
+    const std::string moved = addEvent(calendarId, file->clone());
+    if (moved.empty())
         return {};
     removeEvent(key);
     return moved;
 }
 
-bool CalendarStore::removeEvent(const QString &key)
+bool CalendarStore::removeEvent(const std::string& key)
 {
     if (!m_events.contains(key))
         return false;
-    if (!QFile::remove(pathOf(key)) && QFile::exists(pathOf(key)))
+    std::error_code error;
+    if (!fs::remove(pathOf(key), error) && fs::exists(pathOf(key), error))
         return false;
-    m_events.remove(key);
-    Q_EMIT changed();
+    m_events.erase(key);
+    emitChanged();
     return true;
 }
 
-int CalendarStore::importData(const QString &calendarId, const QByteArray &data)
+int CalendarStore::importData(const std::string& calendarId, std::string_view data)
 {
     if (!m_calendars.contains(calendarId))
         return -1;
@@ -344,34 +360,37 @@ int CalendarStore::importData(const QString &calendarId, const QByteArray &data)
     if (files.empty())
         return -1;
 
-    QHash<QString, QString> byUid;
-    for (auto it = m_events.constBegin(); it != m_events.constEnd(); ++it) {
-        if (calendarOf(it.key()) == calendarId)
-            byUid.insert(it->file->uid(), it.key());
+    std::unordered_map<std::string, std::string> byUid;
+    for (const auto& [key, entry] : m_events) {
+        if (calendarOf(key) == calendarId)
+            byUid[entry.file->uid()] = key;
     }
 
     int count = 0;
-    {
-        // One change for the whole file.
-        const QSignalBlocker blocker(this);
-        for (std::unique_ptr<EventFile> &file : files) {
-            const QString existing = byUid.value(file->uid());
-            const QString key = existing.isEmpty() ? addEvent(calendarId, std::move(file))
-                                                   : updateEvent(existing, std::move(file));
-            if (!key.isEmpty())
-                ++count;
-        }
+    m_batching = true;
+    for (std::unique_ptr<EventFile>& file : files) {
+        const auto existing = byUid.find(file->uid());
+        const std::string key = existing == byUid.end() ? addEvent(calendarId, std::move(file))
+                                                        : updateEvent(existing->second, std::move(file));
+        if (!key.empty())
+            ++count;
     }
-    Q_EMIT changed();
+    m_batching = false;
+    emitChanged();
     return count;
 }
 
-QByteArray CalendarStore::exportCalendar(const QString &id) const
+std::string CalendarStore::exportCalendar(const std::string& id) const
 {
-    QList<const EventFile *> files;
-    for (auto it = m_events.constBegin(); it != m_events.constEnd(); ++it) {
-        if (calendarOf(it.key()) == id)
-            files.append(it->file.get());
+    std::vector<std::pair<std::string, const EventFile*>> files;
+    for (const auto& [key, entry] : m_events) {
+        if (calendarOf(key) == id)
+            files.emplace_back(key, entry.file.get());
     }
-    return EventFile::join(files);
+    // Stable output, whatever order the events are kept in.
+    std::sort(files.begin(), files.end());
+    std::vector<const EventFile*> list;
+    for (const auto& [key, file] : files)
+        list.push_back(file);
+    return EventFile::join(list);
 }

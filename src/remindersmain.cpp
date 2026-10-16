@@ -2,24 +2,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "calendarstore.h"
-#include "cutefishapplication.h"
 #include "reminderservice.h"
 
-#include <QCoreApplication>
-#include <QDBusConnection>
+#include <base/dbus.h>
+#include <base/event_loop.h>
 
-int main(int argc, char *argv[])
+int main()
 {
-    Cutefish::Application::prepare();
-    QCoreApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("cutefish-calendar-reminders"));
-
-    auto bus = QDBusConnection::sessionBus();
-    if (!bus.isConnected() || !bus.registerService(QStringLiteral("com.cutefish.CalendarReminders")))
+    cutefish::base::EventLoop loop;
+    cutefish::base::dbus::Connection* bus = cutefish::base::dbus::Connection::session(&loop);
+    if (!bus || !bus->requestName("com.cutefish.CalendarReminders"))
         return 0;
 
     CalendarStore store;
-    ReminderService service(&store);
+    ReminderService service(&store, bus);
     store.loadAsync();
-    return app.exec();
+    return loop.run();
 }

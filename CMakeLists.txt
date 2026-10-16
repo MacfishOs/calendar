@@ -2,60 +2,68 @@ cmake_minimum_required(VERSION 3.16)
 
 project(cutefish-calendar VERSION 1.0.0 LANGUAGES CXX)
 
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(GNUInstallDirs)
 include(CTest)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick QuickControls2 DBus Concurrent)
-find_package(CutefishFramework REQUIRED COMPONENTS Application)
+find_package(CutefishToolkit REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBICAL REQUIRED IMPORTED_TARGET libical)
+pkg_check_modules(ICU REQUIRED IMPORTED_TARGET icu-uc icu-i18n)
 
 add_library(calendar-core STATIC
+    src/calendarmodel.cpp
     src/calendarstore.cpp
+    src/color.cpp
+    src/datetime.cpp
     src/eventfile.cpp
     src/eventlayout.cpp
+    src/localedata.cpp
     src/reminders.cpp
+    src/sha1.cpp
+    src/text.cpp
     src/timezones.cpp
+    src/trash.cpp
+    src/userdirs.cpp
+    src/uuid.cpp
 )
 target_include_directories(calendar-core PUBLIC src)
-# Linked into the application module.
-set_target_properties(calendar-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(calendar-core PUBLIC Qt6::Core Qt6::Gui Qt6::Concurrent PkgConfig::LIBICAL)
+target_link_libraries(calendar-core PUBLIC Cutefish::ToolkitBase PkgConfig::LIBICAL PkgConfig::ICU)
 
-cutefish_add_application(${PROJECT_NAME} SOURCES
-    src/main.cpp
-    src/application.cpp
-    resources.qrc
+add_library(calendar-ui STATIC
+    src/ui/calendarroot.cpp
+    src/ui/calendarwindow.cpp
+    src/ui/dialogs.cpp
+    src/ui/eventdialog.cpp
+    src/ui/eventviews.cpp
+    src/ui/glyphs.cpp
+    src/ui/headerbar.cpp
+    src/ui/minimonth.cpp
+    src/ui/monthview.cpp
+    src/ui/searchresults.cpp
+    src/ui/sidebar.cpp
+    src/ui/timegridview.cpp
+    src/ui/yearview.cpp
 )
-target_compile_definitions(${PROJECT_NAME}-module PRIVATE CALENDAR_VERSION="${PROJECT_VERSION}")
-target_link_libraries(${PROJECT_NAME}-module PRIVATE
-    calendar-core
-    Qt6::Gui
-    Qt6::Quick
-    Qt6::QuickControls2
-    Qt6::DBus
-)
+target_link_libraries(calendar-ui PUBLIC calendar-core Cutefish::Toolkit)
+
+add_executable(cutefish-calendar src/main.cpp)
+target_compile_definitions(cutefish-calendar PRIVATE CALENDAR_VERSION="${PROJECT_VERSION}")
+target_link_libraries(cutefish-calendar PRIVATE calendar-ui)
 
 add_executable(cutefish-calendar-reminders
     src/remindersmain.cpp
     src/reminderservice.cpp
 )
-target_link_libraries(cutefish-calendar-reminders PRIVATE
-    calendar-core
-    Cutefish::Application
-    Qt6::DBus
-)
+target_link_libraries(cutefish-calendar-reminders PRIVATE calendar-core)
 
-install(TARGETS cutefish-calendar-reminders RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS cutefish-calendar cutefish-calendar-reminders RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES cutefish-calendar.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES cutefish-calendar-reminders.desktop DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/xdg/autostart)
 
 if(BUILD_TESTING)
-    find_package(Qt6 REQUIRED COMPONENTS Test)
+    find_package(GTest REQUIRED)
     add_subdirectory(tests)
 endif()

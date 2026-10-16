@@ -1,84 +1,88 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "application.h"
+#include "calendarmodel.h"
 #include "calendarstore.h"
-#include "cutefishapplication.h"
+#include "ui/calendarwindow.h"
+#include "ui/glyphs.h"
 
-#include <QCommandLineParser>
-#include <QDBusConnection>
-#include <QDBusInterface>
-#include <QDir>
-#include <QFileInfo>
-#include <QGuiApplication>
-#include <QIcon>
-#include <QQmlApplicationEngine>
-#include <QQmlContext>
-#include <QQuickWindow>
+#include <base/command_line.h>
+#include <base/dbus.h>
+#include <base/url.h>
+#include <ui/application.h>
 
-int cutefish_application_main(int argc, char *argv[])
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace dbus = cutefish::base::dbus;
+
+int main(int argc, char** argv)
 {
-    Q_UNUSED(argc);
-    Q_UNUSED(argv);
-
-    QGuiApplication &app = *qGuiApp;
-    app.setApplicationName(QStringLiteral("cutefish-calendar"));
-    app.setApplicationVersion(QStringLiteral(CALENDAR_VERSION));
-    app.setDesktopFileName(QStringLiteral("cutefish-calendar"));
-    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("office-calendar")));
-
-    QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Cutefish Calendar"));
+    cutefish::base::CommandLineParser parser;
+    parser.setApplicationDescription("Cutefish Calendar");
+    parser.setApplicationVersion(CALENDAR_VERSION);
     parser.addHelpOption();
     parser.addVersionOption();
-    const QCommandLineOption dateOption(QStringLiteral("date"), QStringLiteral("Show this day."),
-                                        QStringLiteral("YYYY-MM-DD"));
-    parser.addOption(dateOption);
-    parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("Calendar files to import."),
-                                 QStringLiteral("[FILE...]"));
-    parser.process(app);
+    parser.addOption({"date", "Show this day.", "YYYY-MM-DD"});
+    parser.addPositionalArgument("files", "Calendar files to import.", "[FILE...]");
+    parser.process(argc, argv);
 
-    QStringList files;
-    const QStringList arguments = parser.positionalArguments();
-    for (const QString &argument : arguments) {
-        const QUrl url = QUrl::fromUserInput(argument, QDir::currentPath(), QUrl::AssumeLocalFile);
-        files.append(url.isLocalFile() ? QFileInfo(url.toLocalFile()).absoluteFilePath() : argument);
+    std::vector<std::string> files;
+    for (const std::string& argument : parser.positionalArguments()) {
+        // Local files as absolute paths, other URLs as they are.
+        std::string path = argument;
+        if (argument.find("://") != std::string::npos) {
+            const std::optional<std::string> local = cutefish::base::url::toLocalFile(argument);
+            if (!local) {
+                files.push_back(argument);
+                continue;
+            }
+            path = *local;
+        }
+        std::error_code error;
+        files.push_back(std::filesystem::absolute(path, error).lexically_normal().string());
     }
-    const QString date = parser.value(dateOption);
+    const std::string date = parser.value("date");
+
+    cutefish::ui::Application application(argc, argv);
+    application.setApplicationId("cutefish-calendar");
 
     // A running calendar takes the files and the day, and this process ends.
-    auto bus = QDBusConnection::sessionBus();
-    const QString service = QStringLiteral("com.cutefish.Calendar");
-    const QString path = QStringLiteral("/Calendar");
-    if (bus.isConnected() && !bus.registerService(service)) {
-        QDBusInterface existing(service, path, service, bus);
-        existing.setTimeout(5000);
-        existing.call(QStringLiteral("open"), files, date);
+    dbus::Connection* bus = application.sessionBus();
+    if (bus && !bus->requestName("com.cutefish.Calendar")) {
+        dbus::Proxy existing(bus, "com.cutefish.Calendar", "/Calendar", "com.cutefish.Calendar");
+        existing.setTimeout(std::chrono::seconds(5));
+        existing.call("open", files, date);
         return 0;
     }
 
+    registerCalendarGlyphs();
+
     CalendarStore store;
-    Application application(&store);
-    bus.registerObject(path, &application, QDBusConnection::ExportScriptableSlots);
-
-    QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty(QStringLiteral("App"), &application);
-    engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
-    if (engine.rootObjects().isEmpty())
-        return 1;
-
-    auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
-    QObject::connect(&application, &Application::activationRequested, window, [window] {
-        window->show();
-        window->raise();
-        window->requestActivate();
-    });
-    store.loadAsync();
-    if (!files.isEmpty() || !date.isEmpty()) {
-        // Imports wait for the calendars to be read.
-        QObject::connect(&application, &Application::readyChanged, &application, [&application, files, date] {
-            application.open(files, date);
-        }, Qt::SingleShotConnection);
+    CalendarModel model(&store);
+    std::unique_ptr<dbus::Object> object;
+    if (bus) {
+        object = std::make_unique<dbus::Object>(bus, "/Calendar", "com.cutefish.Calendar");
+        object->addMethod("activateWindow", [&model] { model.activateWindow(); });
+        object->addMethod("open", [&model](const std::vector<std::string>& files, const std::string& date) {
+            model.open(files, date);
+        });
+        object->publish();
     }
-    return app.exec();
+
+    CalendarWindow window(&model);
+    window.show();
+
+    // Imports wait for the calendars to be read.
+    cutefish::base::Subscription ready;
+    if (!files.empty() || !date.empty()) {
+        ready = model.readyChanged.connect([&model, &ready, files, date] {
+            model.open(files, date);
+            ready.reset();
+        });
+    }
+    store.loadAsync();
+    return application.run();
 }

@@ -1,19 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#ifndef TIMEZONES_H
-#define TIMEZONES_H
+#pragma once
 
-#include <QByteArray>
-#include <QTimeZone>
+#include "datetime.h"
+
+#include <string_view>
 
 namespace TimeZones
 {
 // An IANA id, one behind a vendor prefix ("/freeassociation.sourceforge.net/
 // Europe/Berlin") or a Windows name; invalid when none is known.
-QTimeZone fromTzid(const QByteArray &tzid);
+TimeZone fromTzid(std::string_view tzid);
 
-QTimeZone system();
+// The system's zone by its IANA id, or the system's local time without one.
+TimeZone system();
 }
-
-#endif

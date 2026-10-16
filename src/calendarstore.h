@@ -1,104 +1,110 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#ifndef CALENDARSTORE_H
-#define CALENDARSTORE_H
+#pragma once
 
+#include "color.h"
 #include "eventfile.h"
 
-#include <QColor>
-#include <QDateTime>
-#include <QHash>
-#include <QObject>
-#include <QSet>
-#include <QTimer>
+#include <base/file_watcher.h>
+#include <base/signal.h>
+#include <base/thread_pool.h>
+#include <base/timer.h>
 
+#include <filesystem>
+#include <map>
 #include <memory>
-
-class QFileSystemWatcher;
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 struct CalendarInfo
 {
-    QString id;
-    QString name;
-    QColor color;
+    std::string id;
+    std::string name;
+    Rgb color;
 };
 
 // Calendars as vdir directories: one iCalendar file per event, name and colour
 // in `displayname` and `color`. Changes made by others on disk are picked up.
-class CalendarStore : public QObject
+class CalendarStore
 {
-    Q_OBJECT
-
 public:
-    explicit CalendarStore(const QString &root = defaultRoot(), QObject *parent = nullptr);
-    ~CalendarStore() override;
+    explicit CalendarStore(std::string root = defaultRoot());
+    ~CalendarStore();
 
-    static QString defaultRoot();
+    CalendarStore(const CalendarStore&) = delete;
+    CalendarStore& operator=(const CalendarStore&) = delete;
 
-    QString root() const { return m_root; }
+    static std::string defaultRoot();
+
+    const std::string& root() const { return m_root; }
     void load();
     void loadAsync();
     bool isReady() const { return m_ready; }
 
-    QList<CalendarInfo> calendars() const;
-    bool hasCalendar(const QString &id) const { return m_calendars.contains(id); }
-    CalendarInfo calendar(const QString &id) const { return m_calendars.value(id); }
-    QString createCalendar(const QString &name, const QColor &color);
-    bool updateCalendar(const QString &id, const QString &name, const QColor &color);
+    std::vector<CalendarInfo> calendars() const;
+    bool hasCalendar(const std::string& id) const { return m_calendars.contains(id); }
+    CalendarInfo calendar(const std::string& id) const;
+    std::string createCalendar(const std::string& name, Rgb color);
+    bool updateCalendar(const std::string& id, const std::string& name, Rgb color);
     // Moves the calendar's directory to the trash.
-    bool removeCalendar(const QString &id);
-    int eventCount(const QString &calendarId) const;
+    bool removeCalendar(const std::string& id);
+    int eventCount(const std::string& calendarId) const;
 
-    QList<Occurrence> occurrences(QDate from, QDate to, const QSet<QString> &hiddenCalendars = {}) const;
-    QStringList keys() const { return m_events.keys(); }
-    const EventFile *event(const QString &key) const;
-    static QString calendarOf(const QString &key);
+    std::vector<Occurrence> occurrences(Date from, Date to,
+                                        const std::unordered_set<std::string>& hiddenCalendars = {}) const;
+    std::vector<std::string> keys() const;
+    const EventFile* event(const std::string& key) const;
+    static std::string calendarOf(const std::string& key);
 
-    QString addEvent(const QString &calendarId, std::unique_ptr<EventFile> file);
-    QString updateEvent(const QString &key, std::unique_ptr<EventFile> file);
-    QString moveEvent(const QString &key, const QString &calendarId);
-    bool removeEvent(const QString &key);
+    std::string addEvent(const std::string& calendarId, std::unique_ptr<EventFile> file);
+    std::string updateEvent(const std::string& key, std::unique_ptr<EventFile> file);
+    std::string moveEvent(const std::string& key, const std::string& calendarId);
+    bool removeEvent(const std::string& key);
 
     // Replaces events with the same UID; -1 when the data holds none.
-    int importData(const QString &calendarId, const QByteArray &data);
-    QByteArray exportCalendar(const QString &id) const;
+    int importData(const std::string& calendarId, std::string_view data);
+    std::string exportCalendar(const std::string& id) const;
 
-Q_SIGNALS:
-    void readyChanged();
-    void changed();
+    cutefish::base::Signal<> readyChanged;
+    cutefish::base::Signal<> changed;
 
 private:
     struct Entry
     {
         std::shared_ptr<const EventFile> file;
-        QDateTime modified;
-        qint64 size = 0;
+        std::filesystem::file_time_type modified;
+        uintmax_t size = 0;
         // Days a single event touches; repeating events are always expanded.
-        QDate firstDay;
-        QDate lastDay;
+        Date firstDay;
+        Date lastDay;
         bool recurring = false;
     };
     struct Snapshot
     {
-        QHash<QString, CalendarInfo> calendars;
-        QHash<QString, Entry> events;
+        std::unordered_map<std::string, CalendarInfo> calendars;
+        std::unordered_map<std::string, Entry> events;
     };
 
-    static Snapshot scan(const QString &root, const QHash<QString, Entry> &known);
+    static Snapshot scan(const std::string& root, const std::unordered_map<std::string, Entry>& known);
     static Entry makeEntry(std::shared_ptr<const EventFile> file);
     void apply(Snapshot snapshot);
     void watch();
-    bool write(const QString &key, const EventFile &file);
-    QString fileNameFor(const QString &calendarId, const QString &uid) const;
-    QString pathOf(const QString &key) const;
+    void emitChanged();
+    bool write(const std::string& key, const EventFile& file);
+    void stamp(const std::string& key, Entry* entry) const;
+    std::string fileNameFor(const std::string& calendarId, const std::string& uid) const;
+    std::string pathOf(const std::string& key) const;
 
-    QString m_root;
+    std::string m_root;
     bool m_ready = false;
-    QHash<QString, CalendarInfo> m_calendars;
-    QHash<QString, Entry> m_events;
-    QFileSystemWatcher *m_watcher = nullptr;
-    QTimer m_rescan;
+    // One change for a batch of them, as an import makes.
+    bool m_batching = false;
+    std::unordered_map<std::string, CalendarInfo> m_calendars;
+    std::unordered_map<std::string, Entry> m_events;
+    std::map<std::string, cutefish::base::FileWatch> m_watches;
+    cutefish::base::Timer m_rescan;
+    cutefish::base::Job m_scan;
 };
-
-#endif

@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#ifndef EVENTLAYOUT_H
-#define EVENTLAYOUT_H
+#pragma once
 
 #include "occurrence.h"
 
-#include <QList>
+#include <vector>
 
 namespace EventLayout
 {
@@ -31,15 +30,15 @@ struct More
 
 struct Rows
 {
-    QList<Bar> bars;
-    QList<More> more;
+    std::vector<Bar> bars;
+    std::vector<More> more;
     // Lanes the fullest day needs, before anything is hidden.
     int lanes = 0;
 };
 
 // A day with more than `lanes` occurrences shows lanes - 1 and a count of the
 // rest; `lanes` <= 0 shows everything.
-Rows layoutRows(const QList<Occurrence> &occurrences, QDate first, int rows, int lanes, bool allDayOnly = false,
+Rows layoutRows(const std::vector<Occurrence>& occurrences, Date first, int rows, int lanes, bool allDayOnly = false,
                 int columns = 7);
 
 struct Block
@@ -58,7 +57,5 @@ struct Block
 };
 
 // Blocks shorter than `minimumMinutes` take that much room when overlaps are found.
-QList<Block> layoutDays(const QList<Occurrence> &occurrences, QDate first, int days, int minimumMinutes);
+std::vector<Block> layoutDays(const std::vector<Occurrence>& occurrences, Date first, int days, int minimumMinutes);
 }
-
-#endif

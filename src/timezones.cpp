@@ -3,45 +3,71 @@
 
 #include "timezones.h"
 
-#include <QHash>
-#include <QMutex>
+#include <algorithm>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
-static QTimeZone lookup(const QByteArray &tzid)
+#include <unicode/ucal.h>
+#include <unicode/ustring.h>
+
+static TimeZone fromWindowsId(std::string_view id)
 {
-    const QTimeZone exact(tzid);
+    UErrorCode status = U_ZERO_ERROR;
+    UChar windows[128];
+    int32_t windowsLength = 0;
+    u_strFromUTF8(windows, 128, &windowsLength, id.data(), int32_t(id.size()), &status);
+    if (U_FAILURE(status))
+        return TimeZone::fromId({});
+
+    UChar iana[128];
+    const int32_t length = ucal_getTimeZoneIDForWindowsID(windows, windowsLength, nullptr, iana, 128, &status);
+    if (U_FAILURE(status) || length <= 0)
+        return TimeZone::fromId({});
+    char utf8[256];
+    int32_t utf8Length = 0;
+    u_strToUTF8(utf8, sizeof(utf8), &utf8Length, iana, length, &status);
+    if (U_FAILURE(status))
+        return TimeZone::fromId({});
+    return TimeZone::fromId(std::string_view(utf8, size_t(utf8Length)));
+}
+
+static TimeZone lookup(std::string_view tzid)
+{
+    const TimeZone exact = TimeZone::fromId(tzid);
     if (exact.isValid())
         return exact;
 
     // Vendor prefixes keep the IANA id at the end, as one to three components.
-    const QList<QByteArray> parts = tzid.split('/');
-    for (int count = qMin<int>(3, parts.size() - 1); count >= 1; --count) {
-        const QByteArray suffix = parts.mid(parts.size() - count).join('/');
-        const QTimeZone zone(suffix);
+    std::vector<size_t> slashes;
+    for (size_t i = 0; i < tzid.size(); ++i) {
+        if (tzid[i] == '/')
+            slashes.push_back(i);
+    }
+    for (size_t count = std::min<size_t>(3, slashes.size()); count >= 1; --count) {
+        const TimeZone zone = TimeZone::fromId(tzid.substr(slashes[slashes.size() - count] + 1));
         if (zone.isValid())
             return zone;
     }
-
-    const QByteArray windows = QTimeZone::windowsIdToDefaultIanaId(tzid);
-    if (!windows.isEmpty())
-        return QTimeZone(windows);
-    return {};
+    return fromWindowsId(tzid);
 }
 
-QTimeZone TimeZones::fromTzid(const QByteArray &tzid)
+TimeZone TimeZones::fromTzid(std::string_view tzid)
 {
-    // Files are parsed on a worker thread as well.
-    static QMutex mutex;
-    static QHash<QByteArray, QTimeZone> cache;
+    // Files are parsed on worker threads as well.
+    static std::mutex mutex;
+    static std::unordered_map<std::string, TimeZone> cache;
 
-    QMutexLocker locker(&mutex);
-    auto it = cache.constFind(tzid);
-    if (it == cache.constEnd())
-        it = cache.insert(tzid, lookup(tzid));
-    return *it;
+    std::lock_guard locker(mutex);
+    auto it = cache.find(std::string(tzid));
+    if (it == cache.end())
+        it = cache.emplace(std::string(tzid), lookup(tzid)).first;
+    return it->second;
 }
 
-QTimeZone TimeZones::system()
+TimeZone TimeZones::system()
 {
-    const QTimeZone zone(QTimeZone::systemTimeZoneId());
-    return zone.isValid() ? zone : QTimeZone(QTimeZone::LocalTime);
+    const TimeZone zone = TimeZone::fromId(TimeZone().id());
+    return zone.isValid() ? zone : TimeZone();
 }

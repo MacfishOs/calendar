@@ -6,29 +6,26 @@
 
 #include <algorithm>
 
-QString Reminder::id() const
+std::string Reminder::id() const
 {
-    return occurrence.key + QLatin1Char('#') + occurrence.recurrenceKey + QLatin1Char('@')
-            + QString::number(time.toSecsSinceEpoch());
+    return occurrence.key + '#' + occurrence.recurrenceKey + '@' + std::to_string(time.toSecsSinceEpoch());
 }
 
-QList<Reminder> Reminders::due(const CalendarStore &store, const QDateTime &from, const QDateTime &to)
+std::vector<Reminder> Reminders::due(const CalendarStore& store, const DateTime& from, const DateTime& to)
 {
-    QList<Reminder> reminders;
-    const QStringList keys = store.keys();
-    for (const QString &key : keys) {
-        const EventFile *file = store.event(key);
+    std::vector<Reminder> reminders;
+    for (const std::string& key : store.keys()) {
+        const EventFile* file = store.event(key);
         if (!file)
             continue;
-        const auto alarms = file->alarms(from, to);
-        for (const auto &alarm : alarms) {
-            Reminder reminder { alarm.first, alarm.second };
+        for (const auto& [time, occurrence] : file->alarms(from, to)) {
+            Reminder reminder{time, occurrence};
             reminder.occurrence.key = key;
             reminder.occurrence.calendarId = CalendarStore::calendarOf(key);
-            reminders.append(reminder);
+            reminders.push_back(reminder);
         }
     }
-    std::sort(reminders.begin(), reminders.end(), [](const Reminder &a, const Reminder &b) {
+    std::stable_sort(reminders.begin(), reminders.end(), [](const Reminder& a, const Reminder& b) {
         return a.time < b.time;
     });
     return reminders;

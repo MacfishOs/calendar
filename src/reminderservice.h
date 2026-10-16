@@ -1,34 +1,54 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#ifndef REMINDERSERVICE_H
-#define REMINDERSERVICE_H
+#pragma once
 
 #include "reminders.h"
 
-#include <QHash>
-#include <QObject>
-#include <QTimer>
+#include <base/dbus.h>
+#include <base/signal.h>
+#include <base/timer.h>
+
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 class CalendarStore;
 
-class ReminderService : public QObject
+// Shows the calendar's alarms as notifications while the calendar is closed.
+class ReminderService
 {
-    Q_OBJECT
-
 public:
-    explicit ReminderService(CalendarStore *store, QObject *parent = nullptr);
+    ReminderService(CalendarStore* store, cutefish::base::dbus::Connection* bus);
+
+    ReminderService(const ReminderService&) = delete;
+    ReminderService& operator=(const ReminderService&) = delete;
 
 private:
     void check();
-    void notify(const Reminder &reminder);
+    void notify(const Reminder& reminder);
+    void actionInvoked(uint32_t id, const std::string& key);
 
-    CalendarStore *m_store;
-    QTimer m_timer;
-    QDateTime m_checked;
+    CalendarStore* m_store;
+    cutefish::base::dbus::Connection* m_bus;
+    cutefish::base::dbus::Proxy m_notifications;
+    cutefish::base::Timer m_timer;
+    DateTime m_checked;
     // Fired alarms, kept until a day after they went off.
-    QHash<QString, QDateTime> m_fired;
-    QList<Reminder> m_snoozed;
+    std::unordered_map<std::string, DateTime> m_fired;
+    std::vector<Reminder> m_snoozed;
+    // Notifications on screen by their server id.
+    std::map<uint32_t, Reminder> m_shown;
+    struct Pending
+    {
+        cutefish::base::dbus::PendingCall call;
+        std::shared_ptr<bool> done;
+    };
+    std::vector<Pending> m_pending;
+    cutefish::base::dbus::Match m_actionInvoked;
+    cutefish::base::dbus::Match m_closed;
+    cutefish::base::Subscription m_changed;
 };
-
-#endif

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "eventlayout.h"
+#include "text.h"
 
 #include <algorithm>
-#include <vector>
 
 namespace {
 
@@ -19,59 +19,59 @@ struct Placed
 
 }
 
-static QDateTime startOf(const Occurrence &occurrence)
+static DateTime startOf(const Occurrence& occurrence)
 {
-    return occurrence.allDay ? QDateTime(occurrence.firstDay, QTime(0, 0)) : occurrence.start;
+    return occurrence.allDay ? DateTime(occurrence.firstDay, Time(0, 0)) : occurrence.start;
 }
 
-static int minuteOf(const QTime &time)
+static int minuteOf(const Time& time)
 {
     return time.hour() * 60 + time.minute();
 }
 
-EventLayout::Rows EventLayout::layoutRows(const QList<Occurrence> &occurrences, QDate first, int rows, int lanes,
+EventLayout::Rows EventLayout::layoutRows(const std::vector<Occurrence>& occurrences, Date first, int rows, int lanes,
                                           bool allDayOnly, int columns)
 {
     Rows result;
     for (int row = 0; row < rows; ++row) {
-        const QDate rowStart = first.addDays(qint64(row) * 7);
-        const QDate rowEnd = rowStart.addDays(columns - 1);
+        const Date rowStart = first.addDays(int64_t(row) * 7);
+        const Date rowEnd = rowStart.addDays(columns - 1);
 
         std::vector<Placed> items;
-        for (int i = 0; i < occurrences.size(); ++i) {
-            const Occurrence &occurrence = occurrences.at(i);
+        for (int i = 0; i < int(occurrences.size()); ++i) {
+            const Occurrence& occurrence = occurrences[i];
             if (allDayOnly && !occurrence.allDay)
                 continue;
             if (occurrence.lastDay < rowStart || occurrence.firstDay > rowEnd)
                 continue;
             Placed item;
             item.index = i;
-            item.first = int(rowStart.daysTo(qMax(occurrence.firstDay, rowStart)));
-            item.last = int(rowStart.daysTo(qMin(occurrence.lastDay, rowEnd)));
+            item.first = int(rowStart.daysTo(std::max(occurrence.firstDay, rowStart)));
+            item.last = int(rowStart.daysTo(std::min(occurrence.lastDay, rowEnd)));
             item.bar = occurrence.allDay || occurrence.firstDay != occurrence.lastDay;
             items.push_back(item);
         }
 
         // Bars first, longest first, then the timed events of each day in time order.
-        std::stable_sort(items.begin(), items.end(), [&occurrences](const Placed &a, const Placed &b) {
+        std::stable_sort(items.begin(), items.end(), [&occurrences](const Placed& a, const Placed& b) {
             if (a.bar != b.bar)
                 return a.bar;
             if (a.first != b.first)
                 return a.first < b.first;
-            const Occurrence &x = occurrences.at(a.index);
-            const Occurrence &y = occurrences.at(b.index);
+            const Occurrence& x = occurrences[a.index];
+            const Occurrence& y = occurrences[b.index];
             if (a.bar && x.lastDay != y.lastDay)
                 return x.lastDay > y.lastDay;
             if (x.allDay != y.allDay)
                 return x.allDay;
             if (startOf(x) != startOf(y))
                 return startOf(x) < startOf(y);
-            return x.summary.localeAwareCompare(y.summary) < 0;
+            return localeCompare(x.summary, y.summary) < 0;
         });
 
         std::vector<std::vector<bool>> taken;
         std::vector<int> needed(columns, 0);
-        for (Placed &item : items) {
+        for (Placed& item : items) {
             int lane = 0;
             for (;; ++lane) {
                 if (lane == int(taken.size()))
@@ -85,19 +85,19 @@ EventLayout::Rows EventLayout::layoutRows(const QList<Occurrence> &occurrences, 
             item.lane = lane;
             for (int column = item.first; column <= item.last; ++column) {
                 taken[lane][column] = true;
-                needed[column] = qMax(needed[column], lane + 1);
+                needed[column] = std::max(needed[column], lane + 1);
             }
         }
 
         std::vector<int> visible(columns);
         for (int column = 0; column < columns; ++column) {
-            result.lanes = qMax(result.lanes, needed[column]);
+            result.lanes = std::max(result.lanes, needed[column]);
             visible[column] = lanes <= 0 || needed[column] <= lanes ? needed[column] : lanes - 1;
         }
 
         std::vector<int> hidden(columns, 0);
-        for (const Placed &item : items) {
-            const Occurrence &occurrence = occurrences.at(item.index);
+        for (const Placed& item : items) {
+            const Occurrence& occurrence = occurrences[item.index];
             int column = item.first;
             while (column <= item.last) {
                 if (item.lane >= visible[column]) {
@@ -116,27 +116,27 @@ EventLayout::Rows EventLayout::layoutRows(const QList<Occurrence> &occurrences, 
                 bar.lane = item.lane;
                 bar.continuesBefore = start > item.first || occurrence.firstDay < rowStart;
                 bar.continuesAfter = column - 1 < item.last || occurrence.lastDay > rowEnd;
-                result.bars.append(bar);
+                result.bars.push_back(bar);
             }
         }
         for (int column = 0; column < columns; ++column) {
             if (hidden[column] > 0)
-                result.more.append({ row, column, hidden[column] });
+                result.more.push_back({ row, column, hidden[column] });
         }
     }
     return result;
 }
 
-QList<EventLayout::Block> EventLayout::layoutDays(const QList<Occurrence> &occurrences, QDate first, int days,
-                                                  int minimumMinutes)
+std::vector<EventLayout::Block> EventLayout::layoutDays(const std::vector<Occurrence>& occurrences, Date first, int days,
+                                                        int minimumMinutes)
 {
-    QList<Block> result;
+    std::vector<Block> result;
     for (int column = 0; column < days; ++column) {
-        const QDate day = first.addDays(column);
+        const Date day = first.addDays(column);
 
         std::vector<Block> blocks;
-        for (int i = 0; i < occurrences.size(); ++i) {
-            const Occurrence &occurrence = occurrences.at(i);
+        for (int i = 0; i < int(occurrences.size()); ++i) {
+            const Occurrence& occurrence = occurrences[i];
             if (occurrence.allDay || occurrence.firstDay > day || occurrence.lastDay < day)
                 continue;
             Block block;
@@ -147,18 +147,18 @@ QList<EventLayout::Block> EventLayout::layoutDays(const QList<Occurrence> &occur
             block.continuesAfter = occurrence.lastDay > day;
             block.endMinute = block.continuesAfter || occurrence.end.date() > day ? 24 * 60
                                                                                    : minuteOf(occurrence.end.time());
-            block.endMinute = qMax(block.endMinute, block.startMinute);
+            block.endMinute = std::max(block.endMinute, block.startMinute);
             blocks.push_back(block);
         }
 
-        std::stable_sort(blocks.begin(), blocks.end(), [](const Block &a, const Block &b) {
+        std::stable_sort(blocks.begin(), blocks.end(), [](const Block& a, const Block& b) {
             if (a.startMinute != b.startMinute)
                 return a.startMinute < b.startMinute;
             return a.endMinute > b.endMinute;
         });
 
-        const auto reach = [minimumMinutes](const Block &block) {
-            return qMax(block.endMinute, block.startMinute + minimumMinutes);
+        const auto reach = [minimumMinutes](const Block& block) {
+            return std::max(block.endMinute, block.startMinute + minimumMinutes);
         };
 
         // Blocks that overlap, directly or through others, share the width.
@@ -168,13 +168,13 @@ QList<EventLayout::Block> EventLayout::layoutDays(const QList<Occurrence> &occur
         const auto finish = [&](size_t end) {
             const int slotCount = int(slotEnds.size());
             for (size_t i = clusterStart; i < end; ++i) {
-                Block &block = blocks[i];
+                Block& block = blocks[i];
                 block.slotCount = slotCount;
                 block.span = 1;
                 for (int slot = block.slot + 1; slot < slotCount; ++slot) {
                     bool free = true;
                     for (size_t j = clusterStart; j < end && free; ++j) {
-                        const Block &other = blocks[j];
+                        const Block& other = blocks[j];
                         free = other.slot != slot || other.startMinute >= reach(block) || reach(other) <= block.startMinute;
                     }
                     if (!free)
@@ -186,7 +186,7 @@ QList<EventLayout::Block> EventLayout::layoutDays(const QList<Occurrence> &occur
         };
 
         for (size_t i = 0; i < blocks.size(); ++i) {
-            Block &block = blocks[i];
+            Block& block = blocks[i];
             if (i > clusterStart && block.startMinute >= clusterEnd) {
                 finish(i);
                 clusterStart = i;
@@ -199,12 +199,12 @@ QList<EventLayout::Block> EventLayout::layoutDays(const QList<Occurrence> &occur
                 slotEnds.push_back(0);
             slotEnds[slot] = reach(block);
             block.slot = slot;
-            clusterEnd = qMax(clusterEnd, reach(block));
+            clusterEnd = std::max(clusterEnd, reach(block));
         }
         finish(blocks.size());
 
-        for (const Block &block : blocks)
-            result.append(block);
+        for (const Block& block : blocks)
+            result.push_back(block);
     }
     return result;
 }

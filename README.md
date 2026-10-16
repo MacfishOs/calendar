@@ -11,11 +11,10 @@ notifications while the calendar is closed.
 
 ## Dependencies
 
-Calendar uses Qt 6, libical, FishUI and the Cutefish framework
-(`cutefish-framework`).
+Calendar uses the Cutefish toolkit (`cutefish-toolkit`), libical and ICU.
 
 ```sh
-sudo apt install cmake pkg-config qt6-base-dev qt6-declarative-dev libical-dev
+sudo apt install cmake pkg-config libical-dev libicu-dev libgtest-dev
 ```
 
 ## Build and install

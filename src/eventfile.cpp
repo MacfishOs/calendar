@@ -3,15 +3,15 @@
 
 #include "eventfile.h"
 #include "timezones.h"
-
-#include <QHash>
-#include <QSet>
-#include <QUuid>
+#include "uuid.h"
 
 #include <libical/ical.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace {
 
@@ -20,14 +20,14 @@ struct Zone
     enum Kind { Floating, Utc, Named, Custom };
 
     Kind kind = Floating;
-    QTimeZone zone;
+    TimeZone zone;
     // As the file writes it, for Named and Custom.
-    QByteArray tzid;
+    std::string tzid;
     // A VTIMEZONE of the file that no known zone matches.
-    icaltimezone *custom = nullptr;
+    icaltimezone* custom = nullptr;
 };
 
-struct Time
+struct IcalTime
 {
     icaltimetype wall = icaltime_null_time();
     Zone zone;
@@ -39,9 +39,9 @@ struct Time
 // When an event happens: its first start and how long each occurrence lasts.
 struct Series
 {
-    Time start;
+    IcalTime start;
     bool allDay = false;
-    qint64 seconds = 0;
+    int64_t seconds = 0;
     int days = 1;
 };
 
@@ -52,21 +52,21 @@ static const int MaximumInstances = 100000;
 
 // libical walks children with one iterator per parent, which any lookup on
 // the parent moves: loops take a copy of the children first.
-static QList<icalcomponent *> components(icalcomponent *parent, icalcomponent_kind kind)
+static std::vector<icalcomponent*> components(icalcomponent* parent, icalcomponent_kind kind)
 {
-    QList<icalcomponent *> list;
-    for (icalcomponent *child = icalcomponent_get_first_component(parent, kind); child;
+    std::vector<icalcomponent*> list;
+    for (icalcomponent* child = icalcomponent_get_first_component(parent, kind); child;
          child = icalcomponent_get_next_component(parent, kind))
-        list.append(child);
+        list.push_back(child);
     return list;
 }
 
-static QList<icalproperty *> properties(icalcomponent *parent, icalproperty_kind kind)
+static std::vector<icalproperty*> properties(icalcomponent* parent, icalproperty_kind kind)
 {
-    QList<icalproperty *> list;
-    for (icalproperty *property = icalcomponent_get_first_property(parent, kind); property;
+    std::vector<icalproperty*> list;
+    for (icalproperty* property = icalcomponent_get_first_property(parent, kind); property;
          property = icalcomponent_get_next_property(parent, kind))
-        list.append(property);
+        list.push_back(property);
     return list;
 }
 
@@ -80,8 +80,8 @@ static Zone utcZone()
 static Zone systemZone()
 {
     Zone zone;
-    const QTimeZone system = TimeZones::system();
-    if (system.timeSpec() == Qt::TimeZone) {
+    const TimeZone system = TimeZones::system();
+    if (!system.isLocal()) {
         zone.kind = Zone::Named;
         zone.zone = system;
         zone.tzid = system.id();
@@ -89,10 +89,10 @@ static Zone systemZone()
     return zone;
 }
 
-static Zone zoneOf(icalproperty *property, icalcomponent *event)
+static Zone zoneOf(icalproperty* property, icalcomponent* event)
 {
     Zone zone;
-    icalparameter *parameter = icalproperty_get_first_parameter(property, ICAL_TZID_PARAMETER);
+    icalparameter* parameter = icalproperty_get_first_parameter(property, ICAL_TZID_PARAMETER);
     if (!parameter)
         return zone;
 
@@ -103,16 +103,16 @@ static Zone zoneOf(icalproperty *property, icalcomponent *event)
         return zone;
     }
 
-    icalcomponent *calendar = event ? icalcomponent_get_parent(event) : nullptr;
-    zone.custom = calendar ? icalcomponent_get_timezone(calendar, zone.tzid.constData()) : nullptr;
+    icalcomponent* calendar = event ? icalcomponent_get_parent(event) : nullptr;
+    zone.custom = calendar ? icalcomponent_get_timezone(calendar, zone.tzid.c_str()) : nullptr;
     // A TZID nothing defines leaves the time floating.
     zone.kind = zone.custom ? Zone::Custom : Zone::Floating;
     return zone;
 }
 
-static Time makeTime(icaltimetype value, icalproperty *property, icalcomponent *event)
+static IcalTime makeTime(icaltimetype value, icalproperty* property, icalcomponent* event)
 {
-    Time time;
+    IcalTime time;
     time.wall = value;
     time.wall.zone = nullptr;
     if (value.is_date)
@@ -124,13 +124,13 @@ static Time makeTime(icaltimetype value, icalproperty *property, icalcomponent *
     return time;
 }
 
-static Time propertyTime(icalcomponent *event, icalproperty_kind kind)
+static IcalTime propertyTime(icalcomponent* event, icalproperty_kind kind)
 {
-    icalproperty *property = icalcomponent_get_first_property(event, kind);
+    icalproperty* property = icalcomponent_get_first_property(event, kind);
     if (!property)
         return {};
 
-    icalvalue *value = icalproperty_get_value(property);
+    icalvalue* value = icalproperty_get_value(property);
     if (!value)
         return {};
     switch (icalvalue_isa(value)) {
@@ -143,31 +143,36 @@ static Time propertyTime(icalcomponent *event, icalproperty_kind kind)
     }
 }
 
-static QDate dateOf(const icaltimetype &wall)
+static Date dateOf(const icaltimetype& wall)
 {
-    return QDate(wall.year, wall.month, wall.day);
+    return Date(wall.year, wall.month, wall.day);
 }
 
-static QDateTime toDateTime(const Time &time)
+static Time clockOf(const icaltimetype& wall)
 {
-    const QDate date = dateOf(time.wall);
-    const QTime clock(time.wall.hour, time.wall.minute, time.wall.second);
+    return Time(wall.hour, wall.minute, wall.second);
+}
+
+static DateTime toDateTime(const IcalTime& time)
+{
+    const Date date = dateOf(time.wall);
+    const Time clock = clockOf(time.wall);
     switch (time.zone.kind) {
     case Zone::Utc:
-        return QDateTime(date, clock, QTimeZone::UTC);
+        return DateTime(date, clock, TimeZone::utc());
     case Zone::Named:
-        return QDateTime(date, clock, time.zone.zone);
+        return DateTime(date, clock, time.zone.zone);
     case Zone::Custom: {
         icaltimetype wall = time.wall;
-        return QDateTime::fromSecsSinceEpoch(icaltime_as_timet_with_zone(wall, time.zone.custom));
+        return DateTime::fromSecsSinceEpoch(icaltime_as_timet_with_zone(wall, time.zone.custom));
     }
     case Zone::Floating:
         break;
     }
-    return QDateTime(date, clock);
+    return DateTime(date, clock);
 }
 
-static icaltimetype dateWall(QDate date)
+static icaltimetype dateWall(Date date)
 {
     icaltimetype wall = icaltime_null_time();
     wall.year = date.year();
@@ -177,12 +182,12 @@ static icaltimetype dateWall(QDate date)
     return wall;
 }
 
-static icaltimetype toWall(const QDateTime &instant, const Zone &zone)
+static icaltimetype toWall(const DateTime& instant, const Zone& zone)
 {
-    QDateTime local;
+    DateTime local;
     switch (zone.kind) {
     case Zone::Utc:
-        local = instant.toUTC();
+        local = instant.toUtc();
         break;
     case Zone::Named:
         local = instant.toTimeZone(zone.zone);
@@ -198,16 +203,18 @@ static icaltimetype toWall(const QDateTime &instant, const Zone &zone)
     }
 
     icaltimetype wall = icaltime_null_time();
-    wall.year = local.date().year();
-    wall.month = local.date().month();
-    wall.day = local.date().day();
-    wall.hour = local.time().hour();
-    wall.minute = local.time().minute();
-    wall.second = local.time().second();
+    const Date date = local.date();
+    const Time clock = local.time();
+    wall.year = date.year();
+    wall.month = date.month();
+    wall.day = date.day();
+    wall.hour = clock.hour();
+    wall.minute = clock.minute();
+    wall.second = clock.second();
     return wall;
 }
 
-static void setTimeValue(icalproperty *property, const Time &time)
+static void setTimeValue(icalproperty* property, const IcalTime& time)
 {
     icalproperty_remove_parameter_by_kind(property, ICAL_TZID_PARAMETER);
     icaltimetype value = time.wall;
@@ -221,140 +228,140 @@ static void setTimeValue(icalproperty *property, const Time &time)
         value.zone = icaltimezone_get_utc_timezone();
     icalproperty_set_value(property, icalvalue_new_datetime(value));
     if (time.zone.kind == Zone::Named || time.zone.kind == Zone::Custom)
-        icalproperty_add_parameter(property, icalparameter_new_tzid(time.zone.tzid.constData()));
+        icalproperty_add_parameter(property, icalparameter_new_tzid(time.zone.tzid.c_str()));
 }
 
-static icalproperty *newTimeProperty(icalproperty_kind kind, const Time &time)
+static icalproperty* newTimeProperty(icalproperty_kind kind, const IcalTime& time)
 {
-    icalproperty *property = icalproperty_new(kind);
+    icalproperty* property = icalproperty_new(kind);
     setTimeValue(property, time);
     return property;
 }
 
-static void removeProperties(icalcomponent *component, icalproperty_kind kind)
+static void removeProperties(icalcomponent* component, icalproperty_kind kind)
 {
-    while (icalproperty *property = icalcomponent_get_first_property(component, kind)) {
+    while (icalproperty* property = icalcomponent_get_first_property(component, kind)) {
         icalcomponent_remove_property(component, property);
         icalproperty_free(property);
     }
 }
 
-static QString text(icalcomponent *event, icalproperty_kind kind)
+static std::string text(icalcomponent* event, icalproperty_kind kind)
 {
-    icalproperty *property = icalcomponent_get_first_property(event, kind);
+    icalproperty* property = icalcomponent_get_first_property(event, kind);
     if (!property)
         return {};
-    icalvalue *value = icalproperty_get_value(property);
-    const char *string = value ? icalvalue_get_text(value) : nullptr;
-    return string ? QString::fromUtf8(string) : QString();
+    icalvalue* value = icalproperty_get_value(property);
+    const char* string = value ? icalvalue_get_text(value) : nullptr;
+    return string ? std::string(string) : std::string();
 }
 
-static void setText(icalcomponent *event, icalproperty_kind kind, const QString &value)
+static void setText(icalcomponent* event, icalproperty_kind kind, const std::string& value)
 {
     removeProperties(event, kind);
-    if (value.isEmpty() && kind != ICAL_SUMMARY_PROPERTY)
+    if (value.empty() && kind != ICAL_SUMMARY_PROPERTY)
         return;
-    icalproperty *property = icalproperty_new(kind);
-    icalproperty_set_value(property, icalvalue_new_text(value.toUtf8().constData()));
+    icalproperty* property = icalproperty_new(kind);
+    icalproperty_set_value(property, icalvalue_new_text(value.c_str()));
     icalcomponent_add_property(event, property);
 }
 
-static QString uidOf(icalcomponent *event)
+static std::string uidOf(icalcomponent* event)
 {
-    const char *uid = icalcomponent_get_uid(event);
-    return uid ? QString::fromUtf8(uid) : QString();
+    const char* uid = icalcomponent_get_uid(event);
+    return uid ? std::string(uid) : std::string();
 }
 
-static bool isOverride(icalcomponent *event)
+static bool isOverride(icalcomponent* event)
 {
     return icalcomponent_get_first_property(event, ICAL_RECURRENCEID_PROPERTY) != nullptr;
 }
 
-static bool isCancelled(icalcomponent *event)
+static bool isCancelled(icalcomponent* event)
 {
     return icalcomponent_get_first_property(event, ICAL_STATUS_PROPERTY)
             && icalcomponent_get_status(event) == ICAL_STATUS_CANCELLED;
 }
 
-static Series seriesOf(icalcomponent *event)
+static Series seriesOf(icalcomponent* event)
 {
     Series series;
     series.start = propertyTime(event, ICAL_DTSTART_PROPERTY);
     series.allDay = series.start.isDate();
 
-    const Time end = propertyTime(event, ICAL_DTEND_PROPERTY);
-    icalproperty *duration = icalcomponent_get_first_property(event, ICAL_DURATION_PROPERTY);
+    const IcalTime end = propertyTime(event, ICAL_DTEND_PROPERTY);
+    icalproperty* duration = icalcomponent_get_first_property(event, ICAL_DURATION_PROPERTY);
     if (series.allDay) {
         if (!end.isNull())
-            series.days = dateOf(series.start.wall).daysTo(dateOf(end.wall));
+            series.days = int(dateOf(series.start.wall).daysTo(dateOf(end.wall)));
         else if (duration)
             series.days = icaldurationtype_as_int(icalproperty_get_duration(duration)) / 86400;
-        series.days = qMax(1, series.days);
+        series.days = std::max(1, series.days);
     } else {
         if (!end.isNull())
             series.seconds = toDateTime(series.start).secsTo(toDateTime(end));
         else if (duration)
             series.seconds = icaldurationtype_as_int(icalproperty_get_duration(duration));
-        series.seconds = qMax<qint64>(0, series.seconds);
+        series.seconds = std::max<int64_t>(0, series.seconds);
     }
     return series;
 }
 
-static QString dateKey(QDate date)
+static std::string dateKey(Date date)
 {
-    return QLatin1Char('D') + date.toString(QStringLiteral("yyyyMMdd"));
+    return 'D' + date.toCompactString();
 }
 
-static QString instantKey(const QDateTime &instant)
+static std::string instantKey(const DateTime& instant)
 {
-    return QLatin1Char('T') + QString::number(instant.toSecsSinceEpoch());
+    return 'T' + std::to_string(instant.toSecsSinceEpoch());
 }
 
-static QString keyOf(const Time &time)
+static std::string keyOf(const IcalTime& time)
 {
     return time.isDate() ? dateKey(dateOf(time.wall)) : instantKey(toDateTime(time));
 }
 
-static bool keyIsDate(const QString &key)
+static bool keyIsDate(const std::string& key)
 {
-    return key.startsWith(QLatin1Char('D'));
+    return !key.empty() && key.front() == 'D';
 }
 
-static QDate keyDate(const QString &key)
+static Date keyDate(const std::string& key)
 {
-    return QDate::fromString(key.mid(1), QStringLiteral("yyyyMMdd"));
+    return key.empty() ? Date() : Date::fromCompactString(std::string_view(key).substr(1));
 }
 
-static QDateTime keyInstant(const QString &key)
+static DateTime keyInstant(const std::string& key)
 {
-    return QDateTime::fromSecsSinceEpoch(key.mid(1).toLongLong());
+    return DateTime::fromSecsSinceEpoch(key.size() > 1 ? std::strtoll(key.c_str() + 1, nullptr, 10) : 0);
 }
 
-static bool keyBefore(const QString &a, const QString &b)
+static bool keyBefore(const std::string& a, const std::string& b)
 {
     if (keyIsDate(a) && keyIsDate(b))
         return keyDate(a) < keyDate(b);
     if (!keyIsDate(a) && !keyIsDate(b))
         return keyInstant(a) < keyInstant(b);
-    const QDate first = keyIsDate(a) ? keyDate(a) : keyInstant(a).toLocalTime().date();
-    const QDate second = keyIsDate(b) ? keyDate(b) : keyInstant(b).toLocalTime().date();
+    const Date first = keyIsDate(a) ? keyDate(a) : keyInstant(a).toLocalTime().date();
+    const Date second = keyIsDate(b) ? keyDate(b) : keyInstant(b).toLocalTime().date();
     return first < second;
 }
 
 // The instance a key names, as the series' start property writes it.
-static Time instanceTime(const Series &series, const QString &key)
+static IcalTime instanceTime(const Series& series, const std::string& key)
 {
-    Time time;
+    IcalTime time;
     time.zone = series.start.zone;
     if (series.allDay)
         time.wall = dateWall(keyIsDate(key) ? keyDate(key) : keyInstant(key).toLocalTime().date());
     else
-        time.wall = toWall(keyIsDate(key) ? QDateTime(keyDate(key), toDateTime(series.start).time())
+        time.wall = toWall(keyIsDate(key) ? DateTime(keyDate(key), toDateTime(series.start).time())
                                           : keyInstant(key), series.start.zone);
     return time;
 }
 
-static void fillDays(Occurrence *occurrence)
+static void fillDays(Occurrence* occurrence)
 {
     if (occurrence->allDay)
         return;
@@ -364,7 +371,7 @@ static void fillDays(Occurrence *occurrence)
 }
 
 // The occurrence the event's own fields describe, starting at `start`.
-static Occurrence makeOccurrence(icalcomponent *event, const Series &series, const Time &start)
+static Occurrence makeOccurrence(icalcomponent* event, const Series& series, const IcalTime& start)
 {
     Occurrence occurrence;
     occurrence.summary = text(event, ICAL_SUMMARY_PROPERTY);
@@ -381,20 +388,20 @@ static Occurrence makeOccurrence(icalcomponent *event, const Series &series, con
     return occurrence;
 }
 
-static bool touches(const Occurrence &occurrence, QDate from, QDate to)
+static bool touches(const Occurrence& occurrence, Date from, Date to)
 {
     return occurrence.firstDay < to && occurrence.lastDay >= from;
 }
 
-static Repeat repeatOf(icalcomponent *event, const Series &series)
+static Repeat repeatOf(icalcomponent* event, const Series& series)
 {
     Repeat repeat;
-    icalproperty *property = icalcomponent_get_first_property(event, ICAL_RRULE_PROPERTY);
+    icalproperty* property = icalcomponent_get_first_property(event, ICAL_RRULE_PROPERTY);
     if (!property)
         return repeat;
 
     const icalrecurrencetype rule = icalproperty_get_rrule(property);
-    const auto length = [](const short *array, int size) {
+    const auto length = [](const short* array, int size) {
         int count = 0;
         while (count < size && array[count] != ICAL_RECURRENCE_ARRAY_MAX)
             ++count;
@@ -407,7 +414,7 @@ static Repeat repeatOf(icalcomponent *event, const Series &series)
             || length(rule.by_hour, ICAL_BY_HOUR_SIZE) || length(rule.by_year_day, ICAL_BY_YEARDAY_SIZE)
             || length(rule.by_week_no, ICAL_BY_WEEKNO_SIZE) || length(rule.by_set_pos, ICAL_BY_SETPOS_SIZE);
 
-    const QDate start = dateOf(series.start.wall);
+    const Date start = dateOf(series.start.wall);
     // iCalendar counts weekdays from Sunday = 1.
     const short startDay = short(start.dayOfWeek() % 7 + 1);
     const bool weekdays = days == 5 && [&rule] {
@@ -442,7 +449,7 @@ static Repeat repeatOf(icalcomponent *event, const Series &series)
 
     repeat.count = rule.count;
     if (!icaltime_is_null_time(rule.until)) {
-        Time until;
+        IcalTime until;
         until.wall = rule.until;
         until.wall.zone = nullptr;
         if (rule.until.is_date)
@@ -455,7 +462,7 @@ static Repeat repeatOf(icalcomponent *event, const Series &series)
     return repeat;
 }
 
-static icalrecurrencetype ruleFor(const Repeat &repeat, const Series &series)
+static icalrecurrencetype ruleFor(const Repeat& repeat, const Series& series)
 {
     icalrecurrencetype rule;
     icalrecurrencetype_clear(&rule);
@@ -491,8 +498,8 @@ static icalrecurrencetype ruleFor(const Repeat &repeat, const Series &series)
             rule.until = dateWall(repeat.until);
         } else {
             // The last day is included; a time with a zone ends in UTC.
-            const QDateTime end(repeat.until, QTime(23, 59, 59));
-            Time until;
+            const DateTime end(repeat.until, Time(23, 59, 59));
+            IcalTime until;
             until.zone = series.start.zone.kind == Zone::Floating ? Zone() : utcZone();
             until.wall = toWall(end, until.zone);
             rule.until = until.wall;
@@ -505,16 +512,16 @@ static icalrecurrencetype ruleFor(const Repeat &repeat, const Series &series)
 
 // The start of every instance a rule or RDATE makes, in the series' zone;
 // stops at the first one that starts at or after `end`.
-static void instances(icalcomponent *event, const Series &series, const QDateTime &skipTo, const QDateTime &end,
-                      const std::function<bool(const Time &)> &visit)
+static void instances(icalcomponent* event, const Series& series, const DateTime& skipTo, const DateTime& end,
+                      const std::function<bool(const IcalTime&)>& visit)
 {
-    for (icalproperty *property : properties(event, ICAL_RRULE_PROPERTY)) {
+    for (icalproperty* property : properties(event, ICAL_RRULE_PROPERTY)) {
         icalrecurrencetype rule = icalproperty_get_rrule(property);
         // Compared with floating instances below, so it has to be one too.
         if (!icaltime_is_null_time(rule.until)) {
             if (series.allDay) {
                 if (!rule.until.is_date) {
-                    Time until;
+                    IcalTime until;
                     until.wall = rule.until;
                     until.wall.zone = nullptr;
                     until.zone = icaltime_is_utc(rule.until) ? utcZone() : series.start.zone;
@@ -526,7 +533,7 @@ static void instances(icalcomponent *event, const Series &series, const QDateTim
                 rule.until.minute = 59;
                 rule.until.second = 59;
             } else if (icaltime_is_utc(rule.until)) {
-                Time until;
+                IcalTime until;
                 until.wall = rule.until;
                 until.wall.zone = nullptr;
                 until.zone.kind = Zone::Utc;
@@ -535,7 +542,7 @@ static void instances(icalcomponent *event, const Series &series, const QDateTim
             rule.until.zone = nullptr;
         }
 
-        icalrecur_iterator *iterator = icalrecur_iterator_new(rule, series.start.wall);
+        icalrecur_iterator* iterator = icalrecur_iterator_new(rule, series.start.wall);
         if (!iterator)
             continue;
         if (rule.count == 0 && skipTo.isValid()) {
@@ -551,20 +558,20 @@ static void instances(icalcomponent *event, const Series &series, const QDateTim
             const icaltimetype next = icalrecur_iterator_next(iterator);
             if (icaltime_is_null_time(next))
                 break;
-            Time time;
+            IcalTime time;
             time.wall = next;
             time.wall.zone = nullptr;
             time.zone = series.start.zone;
-            const QDateTime start = series.allDay ? QDateTime(dateOf(next), QTime(0, 0)) : toDateTime(time);
+            const DateTime start = series.allDay ? DateTime(dateOf(next), Time(0, 0)) : toDateTime(time);
             if (start >= end || !visit(time))
                 break;
         }
         icalrecur_iterator_free(iterator);
     }
 
-    for (icalproperty *property : properties(event, ICAL_RDATE_PROPERTY)) {
+    for (icalproperty* property : properties(event, ICAL_RDATE_PROPERTY)) {
         const icaldatetimeperiodtype value = icalproperty_get_rdate(property);
-        Time time = makeTime(icaltime_is_null_time(value.time) ? value.period.start : value.time, property, event);
+        IcalTime time = makeTime(icaltime_is_null_time(value.time) ? value.period.start : value.time, property, event);
         if (series.allDay != time.isDate())
             continue;
         if (!visit(time))
@@ -572,50 +579,48 @@ static void instances(icalcomponent *event, const Series &series, const QDateTim
     }
 }
 
-static QSet<QString> exclusions(icalcomponent *event)
+static std::unordered_set<std::string> exclusions(icalcomponent* event)
 {
-    QSet<QString> keys;
-    for (icalproperty *property : properties(event, ICAL_EXDATE_PROPERTY)) {
+    std::unordered_set<std::string> keys;
+    for (icalproperty* property : properties(event, ICAL_EXDATE_PROPERTY))
         keys.insert(keyOf(makeTime(icalproperty_get_exdate(property), property, event)));
-    }
     return keys;
 }
 
-static bool excluded(const QSet<QString> &exclusions, const Time &time)
+static bool excluded(const std::unordered_set<std::string>& exclusions, const IcalTime& time)
 {
-    return exclusions.contains(keyOf(time))
-            || (!time.isDate() && exclusions.contains(dateKey(dateOf(time.wall))));
+    return exclusions.contains(keyOf(time)) || (!time.isDate() && exclusions.contains(dateKey(dateOf(time.wall))));
 }
 
-static void addTimezone(icalcomponent *calendar, const Zone &zone)
+static void addTimezone(icalcomponent* calendar, const Zone& zone)
 {
-    if (zone.kind != Zone::Named || icalcomponent_get_timezone(calendar, zone.tzid.constData()))
+    if (zone.kind != Zone::Named || icalcomponent_get_timezone(calendar, zone.tzid.c_str()))
         return;
-    icaltimezone *builtin = icaltimezone_get_builtin_timezone(zone.zone.id().constData());
-    icalcomponent *definition = builtin ? icaltimezone_get_component(builtin) : nullptr;
+    icaltimezone* builtin = icaltimezone_get_builtin_timezone(zone.zone.id().c_str());
+    icalcomponent* definition = builtin ? icaltimezone_get_component(builtin) : nullptr;
     if (!definition)
         return;
     // The builtin zones carry a vendor prefix; the events name the zone without it.
-    icalcomponent *copy = icalcomponent_new_clone(definition);
+    icalcomponent* copy = icalcomponent_new_clone(definition);
     removeProperties(copy, ICAL_TZID_PROPERTY);
-    icalcomponent_add_property(copy, icalproperty_new_tzid(zone.tzid.constData()));
+    icalcomponent_add_property(copy, icalproperty_new_tzid(zone.tzid.c_str()));
     icalcomponent_add_component(calendar, copy);
 }
 
-static void writeAlarm(icalcomponent *event, const EventData &data)
+static void writeAlarm(icalcomponent* event, const EventData& data)
 {
     if (data.alarm == EventData::CustomAlarm)
         return;
-    while (icalcomponent *alarm = icalcomponent_get_first_component(event, ICAL_VALARM_COMPONENT)) {
+    while (icalcomponent* alarm = icalcomponent_get_first_component(event, ICAL_VALARM_COMPONENT)) {
         icalcomponent_remove_component(event, alarm);
         icalcomponent_free(alarm);
     }
     if (data.alarm != EventData::OffsetAlarm)
         return;
 
-    icalcomponent *alarm = icalcomponent_new(ICAL_VALARM_COMPONENT);
+    icalcomponent* alarm = icalcomponent_new(ICAL_VALARM_COMPONENT);
     icalcomponent_add_property(alarm, icalproperty_new_action(ICAL_ACTION_DISPLAY));
-    icalcomponent_add_property(alarm, icalproperty_new_description(data.summary.toUtf8().constData()));
+    icalcomponent_add_property(alarm, icalproperty_new_description(data.summary.c_str()));
     icaltriggertype trigger;
     trigger.time = icaltime_null_time();
     trigger.duration = icaldurationtype_from_int(data.alarmOffset * 60);
@@ -623,19 +628,19 @@ static void writeAlarm(icalcomponent *event, const EventData &data)
     icalcomponent_add_component(event, alarm);
 }
 
-static void readAlarm(icalcomponent *event, EventData *data)
+static void readAlarm(icalcomponent* event, EventData* data)
 {
-    icalcomponent *alarm = icalcomponent_get_first_component(event, ICAL_VALARM_COMPONENT);
+    icalcomponent* alarm = icalcomponent_get_first_component(event, ICAL_VALARM_COMPONENT);
     if (!alarm)
         return;
     data->alarm = EventData::CustomAlarm;
     if (components(event, ICAL_VALARM_COMPONENT).size() > 1)
         return;
 
-    icalproperty *property = icalcomponent_get_first_property(alarm, ICAL_TRIGGER_PROPERTY);
+    icalproperty* property = icalcomponent_get_first_property(alarm, ICAL_TRIGGER_PROPERTY);
     if (!property)
         return;
-    icalparameter *related = icalproperty_get_first_parameter(property, ICAL_RELATED_PARAMETER);
+    icalparameter* related = icalproperty_get_first_parameter(property, ICAL_RELATED_PARAMETER);
     const icaltriggertype trigger = icalproperty_get_trigger(property);
     if (!icaltime_is_null_time(trigger.time) || (related && icalparameter_get_related(related) == ICAL_RELATED_END))
         return;
@@ -646,47 +651,47 @@ static void readAlarm(icalcomponent *event, EventData *data)
     data->alarmOffset = seconds / 60;
 }
 
-static QList<QDateTime> alarmTimes(icalcomponent *event, const Occurrence &occurrence)
+static std::vector<DateTime> alarmTimes(icalcomponent* event, const Occurrence& occurrence)
 {
-    QList<QDateTime> times;
-    const QDateTime start = occurrence.allDay ? QDateTime(occurrence.firstDay, QTime(0, 0)) : occurrence.start;
-    const QDateTime end = occurrence.allDay ? QDateTime(occurrence.lastDay.addDays(1), QTime(0, 0)) : occurrence.end;
-    for (icalcomponent *alarm : components(event, ICAL_VALARM_COMPONENT)) {
-        icalproperty *property = icalcomponent_get_first_property(alarm, ICAL_TRIGGER_PROPERTY);
+    std::vector<DateTime> times;
+    const DateTime start = occurrence.allDay ? DateTime(occurrence.firstDay, Time(0, 0)) : occurrence.start;
+    const DateTime end = occurrence.allDay ? DateTime(occurrence.lastDay.addDays(1), Time(0, 0)) : occurrence.end;
+    for (icalcomponent* alarm : components(event, ICAL_VALARM_COMPONENT)) {
+        icalproperty* property = icalcomponent_get_first_property(alarm, ICAL_TRIGGER_PROPERTY);
         if (!property)
             continue;
         const icaltriggertype trigger = icalproperty_get_trigger(property);
         if (!icaltime_is_null_time(trigger.time)) {
-            times.append(toDateTime(makeTime(trigger.time, property, event)).toLocalTime());
+            times.push_back(toDateTime(makeTime(trigger.time, property, event)).toLocalTime());
             continue;
         }
-        icalparameter *related = icalproperty_get_first_parameter(property, ICAL_RELATED_PARAMETER);
+        icalparameter* related = icalproperty_get_first_parameter(property, ICAL_RELATED_PARAMETER);
         const bool fromEnd = related && icalparameter_get_related(related) == ICAL_RELATED_END;
-        times.append((fromEnd ? end : start).addSecs(icaldurationtype_as_int(trigger.duration)));
+        times.push_back((fromEnd ? end : start).addSecs(icaldurationtype_as_int(trigger.duration)));
     }
     return times;
 }
 
 // How far before or after its occurrence any alarm of the file goes off, in days.
-static int alarmReach(icalcomponent *calendar)
+static int alarmReach(icalcomponent* calendar)
 {
     int reach = 0;
-    for (icalcomponent *event : components(calendar, ICAL_VEVENT_COMPONENT)) {
-        for (icalcomponent *alarm : components(event, ICAL_VALARM_COMPONENT)) {
-            icalproperty *property = icalcomponent_get_first_property(alarm, ICAL_TRIGGER_PROPERTY);
+    for (icalcomponent* event : components(calendar, ICAL_VEVENT_COMPONENT)) {
+        for (icalcomponent* alarm : components(event, ICAL_VALARM_COMPONENT)) {
+            icalproperty* property = icalcomponent_get_first_property(alarm, ICAL_TRIGGER_PROPERTY);
             if (property) {
                 const int seconds = icaldurationtype_as_int(icalproperty_get_trigger(property).duration);
-                reach = qMax(reach, qAbs(seconds) / 86400 + 1);
+                reach = std::max(reach, std::abs(seconds) / 86400 + 1);
             }
         }
     }
     return reach;
 }
 
-static void shiftTime(icalproperty *property, icalcomponent *event, qint64 seconds, int days)
+static void shiftTime(icalproperty* property, icalcomponent* event, int64_t seconds, int64_t days)
 {
-    Time time;
-    icalvalue *value = icalproperty_get_value(property);
+    IcalTime time;
+    icalvalue* value = icalproperty_get_value(property);
     if (!value)
         return;
     time = makeTime(icalvalue_isa(value) == ICAL_DATE_VALUE ? icalvalue_get_date(value) : icalvalue_get_datetime(value),
@@ -698,7 +703,7 @@ static void shiftTime(icalproperty *property, icalcomponent *event, qint64 secon
     setTimeValue(property, time);
 }
 
-EventFile::EventFile(icalcomponent *calendar)
+EventFile::EventFile(icalcomponent* calendar)
     : m_calendar(calendar)
 {
 }
@@ -709,22 +714,37 @@ EventFile::~EventFile()
         icalcomponent_free(m_calendar);
 }
 
-static icalcomponent *newCalendar()
+static icalcomponent* newCalendar()
 {
-    icalcomponent *calendar = icalcomponent_new(ICAL_VCALENDAR_COMPONENT);
+    icalcomponent* calendar = icalcomponent_new(ICAL_VCALENDAR_COMPONENT);
     icalcomponent_add_property(calendar, icalproperty_new_version("2.0"));
     icalcomponent_add_property(calendar, icalproperty_new_prodid("-//Cutefish//Calendar//EN"));
     return calendar;
 }
 
-std::unique_ptr<EventFile> EventFile::fromData(const QByteArray &data)
+static icalcomponent* parse(std::string_view data)
 {
-    icalcomponent *root = icalparser_parse_string(data.constData());
+    // The parser reads up to the first NUL.
+    const std::string text(data);
+    return icalparser_parse_string(text.c_str());
+}
+
+static std::string asText(icalcomponent* component)
+{
+    char* string = icalcomponent_as_ical_string_r(component);
+    std::string data(string ? string : "");
+    icalmemory_free_buffer(string);
+    return data;
+}
+
+std::unique_ptr<EventFile> EventFile::fromData(std::string_view data)
+{
+    icalcomponent* root = parse(data);
     if (!root)
         return nullptr;
 
     if (icalcomponent_isa(root) == ICAL_VEVENT_COMPONENT) {
-        icalcomponent *calendar = newCalendar();
+        icalcomponent* calendar = newCalendar();
         icalcomponent_add_component(calendar, root);
         root = calendar;
     }
@@ -736,54 +756,52 @@ std::unique_ptr<EventFile> EventFile::fromData(const QByteArray &data)
     return std::unique_ptr<EventFile>(new EventFile(root));
 }
 
-std::vector<std::unique_ptr<EventFile>> EventFile::split(const QByteArray &data)
+std::vector<std::unique_ptr<EventFile>> EventFile::split(std::string_view data)
 {
     std::vector<std::unique_ptr<EventFile>> files;
-    icalcomponent *root = icalparser_parse_string(data.constData());
+    icalcomponent* root = parse(data);
     if (!root)
         return files;
 
-    QList<icalcomponent *> calendars;
-    if (icalcomponent_isa(root) == ICAL_XROOT_COMPONENT) {
-        for (icalcomponent *calendar : components(root, ICAL_VCALENDAR_COMPONENT))
-            calendars.append(calendar);
-    } else if (icalcomponent_isa(root) == ICAL_VCALENDAR_COMPONENT) {
-        calendars.append(root);
-    }
+    std::vector<icalcomponent*> calendars;
+    if (icalcomponent_isa(root) == ICAL_XROOT_COMPONENT)
+        calendars = components(root, ICAL_VCALENDAR_COMPONENT);
+    else if (icalcomponent_isa(root) == ICAL_VCALENDAR_COMPONENT)
+        calendars.push_back(root);
 
-    QHash<QString, int> byUid;
-    for (icalcomponent *calendar : std::as_const(calendars)) {
-        for (icalcomponent *event : components(calendar, ICAL_VEVENT_COMPONENT)) {
+    std::unordered_map<std::string, size_t> byUid;
+    for (icalcomponent* calendar : calendars) {
+        for (icalcomponent* event : components(calendar, ICAL_VEVENT_COMPONENT)) {
             if (!icalcomponent_get_first_property(event, ICAL_DTSTART_PROPERTY))
                 continue;
-            QString uid = uidOf(event);
-            icalcomponent *copy = icalcomponent_new_clone(event);
-            if (uid.isEmpty()) {
-                uid = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                icalcomponent_set_uid(copy, uid.toUtf8().constData());
+            std::string uid = uidOf(event);
+            icalcomponent* copy = icalcomponent_new_clone(event);
+            if (uid.empty()) {
+                uid = createUuid();
+                icalcomponent_set_uid(copy, uid.c_str());
             }
 
-            auto it = byUid.constFind(uid);
-            if (it == byUid.constEnd()) {
-                icalcomponent *target = newCalendar();
+            auto it = byUid.find(uid);
+            if (it == byUid.end()) {
+                icalcomponent* target = newCalendar();
                 // The zones it may name; unused ones cost nothing but bytes.
-                for (icalcomponent *zone : components(calendar, ICAL_VTIMEZONE_COMPONENT))
+                for (icalcomponent* zone : components(calendar, ICAL_VTIMEZONE_COMPONENT))
                     icalcomponent_add_component(target, icalcomponent_new_clone(zone));
                 files.push_back(std::unique_ptr<EventFile>(new EventFile(target)));
-                it = byUid.insert(uid, int(files.size()) - 1);
+                it = byUid.emplace(uid, files.size() - 1).first;
             }
-            icalcomponent_add_component(files[*it]->m_calendar, copy);
+            icalcomponent_add_component(files[it->second]->m_calendar, copy);
         }
     }
     icalcomponent_free(root);
     return files;
 }
 
-std::unique_ptr<EventFile> EventFile::create(const EventData &data)
+std::unique_ptr<EventFile> EventFile::create(const EventData& data)
 {
-    icalcomponent *calendar = newCalendar();
-    icalcomponent *event = icalcomponent_new(ICAL_VEVENT_COMPONENT);
-    icalcomponent_set_uid(event, QUuid::createUuid().toString(QUuid::WithoutBraces).toUtf8().constData());
+    icalcomponent* calendar = newCalendar();
+    icalcomponent* event = icalcomponent_new(ICAL_VEVENT_COMPONENT);
+    icalcomponent_set_uid(event, createUuid().c_str());
     const icaltimetype now = icaltime_current_time_with_zone(icaltimezone_get_utc_timezone());
     icalcomponent_add_property(event, icalproperty_new_dtstamp(now));
     icalcomponent_add_property(event, icalproperty_new_created(now));
@@ -803,43 +821,37 @@ std::unique_ptr<EventFile> EventFile::clone() const
     return std::unique_ptr<EventFile>(new EventFile(icalcomponent_new_clone(m_calendar)));
 }
 
-QByteArray EventFile::toData() const
+std::string EventFile::toData() const
 {
-    char *string = icalcomponent_as_ical_string_r(m_calendar);
-    const QByteArray data(string);
-    icalmemory_free_buffer(string);
-    return data;
+    return asText(m_calendar);
 }
 
-QByteArray EventFile::join(const QList<const EventFile *> &files)
+std::string EventFile::join(const std::vector<const EventFile*>& files)
 {
-    icalcomponent *calendar = newCalendar();
-    QSet<QByteArray> zones;
-    for (const EventFile *file : files) {
-        for (icalcomponent *component : components(file->m_calendar, ICAL_ANY_COMPONENT)) {
+    icalcomponent* calendar = newCalendar();
+    std::unordered_set<std::string> zones;
+    for (const EventFile* file : files) {
+        for (icalcomponent* component : components(file->m_calendar, ICAL_ANY_COMPONENT)) {
             if (icalcomponent_isa(component) == ICAL_VTIMEZONE_COMPONENT) {
-                icalproperty *tzid = icalcomponent_get_first_property(component, ICAL_TZID_PROPERTY);
-                const QByteArray id = tzid ? QByteArray(icalproperty_get_tzid(tzid)) : QByteArray();
-                if (zones.contains(id))
+                icalproperty* tzid = icalcomponent_get_first_property(component, ICAL_TZID_PROPERTY);
+                const std::string id = tzid ? std::string(icalproperty_get_tzid(tzid)) : std::string();
+                if (!zones.insert(id).second)
                     continue;
-                zones.insert(id);
             } else if (icalcomponent_isa(component) != ICAL_VEVENT_COMPONENT) {
                 continue;
             }
             icalcomponent_add_component(calendar, icalcomponent_new_clone(component));
         }
     }
-    char *string = icalcomponent_as_ical_string_r(calendar);
-    const QByteArray data(string);
-    icalmemory_free_buffer(string);
+    const std::string data = asText(calendar);
     icalcomponent_free(calendar);
     return data;
 }
 
-icalcomponent *EventFile::master() const
+icalcomponent* EventFile::master() const
 {
-    icalcomponent *first = nullptr;
-    for (icalcomponent *event : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
+    icalcomponent* first = nullptr;
+    for (icalcomponent* event : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
         if (!isOverride(event))
             return event;
         if (!first)
@@ -848,18 +860,18 @@ icalcomponent *EventFile::master() const
     return first;
 }
 
-icalcomponent *EventFile::override(const QString &recurrenceKey) const
+icalcomponent* EventFile::override(const std::string& recurrenceKey) const
 {
-    if (recurrenceKey.isEmpty())
+    if (recurrenceKey.empty())
         return nullptr;
-    for (icalcomponent *event : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
+    for (icalcomponent* event : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
         if (isOverride(event) && keyOf(propertyTime(event, ICAL_RECURRENCEID_PROPERTY)) == recurrenceKey)
             return event;
     }
     return nullptr;
 }
 
-void EventFile::touch(icalcomponent *event) const
+void EventFile::touch(icalcomponent* event) const
 {
     const icaltimetype now = icaltime_current_time_with_zone(icaltimezone_get_utc_timezone());
     removeProperties(event, ICAL_DTSTAMP_PROPERTY);
@@ -870,41 +882,41 @@ void EventFile::touch(icalcomponent *event) const
     icalcomponent_set_sequence(event, sequenced ? icalcomponent_get_sequence(event) + 1 : 1);
 }
 
-QString EventFile::uid() const
+std::string EventFile::uid() const
 {
-    icalcomponent *event = master();
-    return event ? uidOf(event) : QString();
+    icalcomponent* event = master();
+    return event ? uidOf(event) : std::string();
 }
 
-QString EventFile::summary() const
+std::string EventFile::summary() const
 {
-    icalcomponent *event = master();
-    return event ? text(event, ICAL_SUMMARY_PROPERTY) : QString();
+    icalcomponent* event = master();
+    return event ? text(event, ICAL_SUMMARY_PROPERTY) : std::string();
 }
 
-QString EventFile::location() const
+std::string EventFile::location() const
 {
-    icalcomponent *event = master();
-    return event ? text(event, ICAL_LOCATION_PROPERTY) : QString();
+    icalcomponent* event = master();
+    return event ? text(event, ICAL_LOCATION_PROPERTY) : std::string();
 }
 
-QString EventFile::description() const
+std::string EventFile::description() const
 {
-    icalcomponent *event = master();
-    return event ? text(event, ICAL_DESCRIPTION_PROPERTY) : QString();
+    icalcomponent* event = master();
+    return event ? text(event, ICAL_DESCRIPTION_PROPERTY) : std::string();
 }
 
 bool EventFile::isRecurring() const
 {
-    icalcomponent *event = master();
+    icalcomponent* event = master();
     return event && !isOverride(event)
             && (icalcomponent_get_first_property(event, ICAL_RRULE_PROPERTY)
                 || icalcomponent_get_first_property(event, ICAL_RDATE_PROPERTY));
 }
 
-void EventFile::expand(QDate from, QDate to, QList<Occurrence> *out) const
+void EventFile::expand(Date from, Date to, std::vector<Occurrence>* out) const
 {
-    icalcomponent *event = master();
+    icalcomponent* event = master();
     if (!event)
         return;
     const Series series = seriesOf(event);
@@ -917,60 +929,60 @@ void EventFile::expand(QDate from, QDate to, QList<Occurrence> *out) const
             return;
         Occurrence occurrence = makeOccurrence(event, series, series.start);
         if (touches(occurrence, from, to))
-            out->append(occurrence);
+            out->push_back(occurrence);
         return;
     }
 
-    QHash<QString, icalcomponent *> overrides;
-    for (icalcomponent *other : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
+    std::unordered_map<std::string, icalcomponent*> overrides;
+    for (icalcomponent* other : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
         if (isOverride(other))
-            overrides.insert(keyOf(propertyTime(other, ICAL_RECURRENCEID_PROPERTY)), other);
+            overrides.emplace(keyOf(propertyTime(other, ICAL_RECURRENCEID_PROPERTY)), other);
     }
-    const QSet<QString> excludedKeys = exclusions(event);
+    const std::unordered_set<std::string> excludedKeys = exclusions(event);
 
-    const QDateTime rangeStart(from, QTime(0, 0));
-    const QDateTime rangeEnd(to, QTime(0, 0));
+    const DateTime rangeStart(from, Time(0, 0));
+    const DateTime rangeEnd(to, Time(0, 0));
     // Instances that start before the range may still reach into it.
-    const QDateTime skipTo = series.allDay ? rangeStart.addDays(-series.days - 1)
-                                           : rangeStart.addSecs(-series.seconds).addDays(-1);
+    const DateTime skipTo = series.allDay ? rangeStart.addDays(-series.days - 1)
+                                          : rangeStart.addSecs(-series.seconds).addDays(-1);
 
-    instances(event, series, skipTo, rangeEnd, [&](const Time &time) {
-        const QString key = keyOf(time);
+    instances(event, series, skipTo, rangeEnd, [&](const IcalTime& time) {
+        const std::string key = keyOf(time);
         if (overrides.contains(key) || excluded(excludedKeys, time))
             return true;
         Occurrence occurrence = makeOccurrence(event, series, time);
         occurrence.recurrenceKey = key;
         occurrence.recurring = true;
         if (touches(occurrence, from, to))
-            out->append(occurrence);
+            out->push_back(occurrence);
         return true;
     });
 
     // Changed instances appear where they were moved to, whatever range they came from.
-    for (auto it = overrides.constBegin(); it != overrides.constEnd(); ++it) {
-        if (isCancelled(it.value()) || excludedKeys.contains(it.key()))
+    for (const auto& [key, changed] : overrides) {
+        if (isCancelled(changed) || excludedKeys.contains(key))
             continue;
-        const Series moved = seriesOf(it.value());
+        const Series moved = seriesOf(changed);
         if (moved.start.isNull())
             continue;
-        Occurrence occurrence = makeOccurrence(it.value(), moved, moved.start);
-        occurrence.recurrenceKey = it.key();
+        Occurrence occurrence = makeOccurrence(changed, moved, moved.start);
+        occurrence.recurrenceKey = key;
         occurrence.recurring = true;
         if (touches(occurrence, from, to))
-            out->append(occurrence);
+            out->push_back(occurrence);
     }
 }
 
-bool EventFile::nextOccurrence(const QDateTime &after, int within, Occurrence *out) const
+bool EventFile::nextOccurrence(const DateTime& after, int within, Occurrence* out) const
 {
-    QList<Occurrence> occurrences;
-    const QDate first = after.toLocalTime().date();
-    expand(first, isRecurring() ? first.addDays(within) : QDate(9999, 12, 31), &occurrences);
+    std::vector<Occurrence> occurrences;
+    const Date first = after.toLocalTime().date();
+    expand(first, isRecurring() ? first.addDays(within) : Date(9999, 12, 31), &occurrences);
 
-    const Occurrence *best = nullptr;
-    QDateTime bestStart;
-    for (const Occurrence &occurrence : std::as_const(occurrences)) {
-        const QDateTime start = occurrence.allDay ? QDateTime(occurrence.firstDay, QTime(0, 0)) : occurrence.start;
+    const Occurrence* best = nullptr;
+    DateTime bestStart;
+    for (const Occurrence& occurrence : occurrences) {
+        const DateTime start = occurrence.allDay ? DateTime(occurrence.firstDay, Time(0, 0)) : occurrence.start;
         if (start < after && !(occurrence.allDay && occurrence.firstDay == first))
             continue;
         if (!best || start < bestStart) {
@@ -983,40 +995,39 @@ bool EventFile::nextOccurrence(const QDateTime &after, int within, Occurrence *o
     return best;
 }
 
-QList<QPair<QDateTime, Occurrence>> EventFile::alarms(const QDateTime &from, const QDateTime &to) const
+std::vector<std::pair<DateTime, Occurrence>> EventFile::alarms(const DateTime& from, const DateTime& to) const
 {
-    QList<QPair<QDateTime, Occurrence>> result;
-    const QList<icalcomponent *> events = components(m_calendar, ICAL_VEVENT_COMPONENT);
-    if (std::none_of(events.cbegin(), events.cend(), [](icalcomponent *event) {
+    std::vector<std::pair<DateTime, Occurrence>> result;
+    const std::vector<icalcomponent*> events = components(m_calendar, ICAL_VEVENT_COMPONENT);
+    if (std::none_of(events.cbegin(), events.cend(), [](icalcomponent* event) {
             return icalcomponent_get_first_component(event, ICAL_VALARM_COMPONENT) != nullptr;
         }))
         return result;
 
     const int reach = alarmReach(m_calendar);
-    QList<Occurrence> occurrences;
+    std::vector<Occurrence> occurrences;
     expand(from.toLocalTime().date().addDays(-reach - 1), to.toLocalTime().date().addDays(reach + 1), &occurrences);
-    for (const Occurrence &occurrence : std::as_const(occurrences)) {
-        icalcomponent *event = occurrence.recurrenceKey.isEmpty() ? master() : override(occurrence.recurrenceKey);
+    for (const Occurrence& occurrence : occurrences) {
+        icalcomponent* event = occurrence.recurrenceKey.empty() ? master() : override(occurrence.recurrenceKey);
         if (!event)
             event = master();
-        const QList<QDateTime> times = alarmTimes(event, occurrence);
-        for (const QDateTime &time : times) {
+        for (const DateTime& time : alarmTimes(event, occurrence)) {
             if (time >= from && time < to)
-                result.append({ time, occurrence });
+                result.emplace_back(time, occurrence);
         }
     }
     return result;
 }
 
-EventData EventFile::data(const QString &recurrenceKey) const
+EventData EventFile::data(const std::string& recurrenceKey) const
 {
     EventData data;
-    icalcomponent *event = master();
+    icalcomponent* event = master();
     if (!event)
         return data;
 
-    icalcomponent *changed = override(recurrenceKey);
-    icalcomponent *source = changed ? changed : event;
+    icalcomponent* changed = override(recurrenceKey);
+    icalcomponent* source = changed ? changed : event;
     data.summary = text(source, ICAL_SUMMARY_PROPERTY);
     data.location = text(source, ICAL_LOCATION_PROPERTY);
     data.description = text(source, ICAL_DESCRIPTION_PROPERTY);
@@ -1026,7 +1037,7 @@ EventData EventFile::data(const QString &recurrenceKey) const
     data.repeat = isRecurring() ? repeatOf(event, series) : Repeat();
 
     const Series timing = changed ? seriesOf(changed) : series;
-    const Time start = changed || recurrenceKey.isEmpty() ? timing.start : instanceTime(series, recurrenceKey);
+    const IcalTime start = changed || recurrenceKey.empty() ? timing.start : instanceTime(series, recurrenceKey);
     data.allDay = timing.allDay;
     if (timing.allDay) {
         data.startDate = dateOf(start.wall);
@@ -1039,28 +1050,28 @@ EventData EventFile::data(const QString &recurrenceKey) const
 }
 
 // Writes the fields every event has; the zone of a timed start stays as it was.
-static void writeFields(icalcomponent *calendar, icalcomponent *event, const EventData &data)
+static void writeFields(icalcomponent* calendar, icalcomponent* event, const EventData& data)
 {
     setText(event, ICAL_SUMMARY_PROPERTY, data.summary);
     setText(event, ICAL_LOCATION_PROPERTY, data.location);
     setText(event, ICAL_DESCRIPTION_PROPERTY, data.description);
 
-    const Time old = propertyTime(event, ICAL_DTSTART_PROPERTY);
+    const IcalTime old = propertyTime(event, ICAL_DTSTART_PROPERTY);
     const Zone zone = old.isNull() || old.isDate() ? systemZone() : old.zone;
     removeProperties(event, ICAL_DTSTART_PROPERTY);
     removeProperties(event, ICAL_DTEND_PROPERTY);
     removeProperties(event, ICAL_DURATION_PROPERTY);
 
-    Time start;
-    Time end;
+    IcalTime start;
+    IcalTime end;
     if (data.allDay) {
         start.wall = dateWall(data.startDate);
-        end.wall = dateWall(qMax(data.endDate, data.startDate).addDays(1));
+        end.wall = dateWall(std::max(data.endDate, data.startDate).addDays(1));
     } else {
         start.zone = zone;
         end.zone = zone;
         start.wall = toWall(data.start, zone);
-        end.wall = toWall(qMax(data.end, data.start), zone);
+        end.wall = toWall(std::max(data.end, data.start), zone);
         addTimezone(calendar, zone);
     }
     icalcomponent_add_property(event, newTimeProperty(ICAL_DTSTART_PROPERTY, start));
@@ -1068,9 +1079,9 @@ static void writeFields(icalcomponent *calendar, icalcomponent *event, const Eve
     writeAlarm(event, data);
 }
 
-void EventFile::setData(const EventData &data)
+void EventFile::setData(const EventData& data)
 {
-    icalcomponent *event = master();
+    icalcomponent* event = master();
     if (!event)
         return;
 
@@ -1092,16 +1103,16 @@ void EventFile::setData(const EventData &data)
     }
     if (!frequencyChanged && !kindChanged && !before.start.isNull()) {
         // The instances moved with the start: so do the ones that were changed or removed.
-        const qint64 seconds = before.allDay ? 0 : toDateTime(before.start).secsTo(toDateTime(after.start));
-        const int days = before.allDay ? dateOf(before.start.wall).daysTo(dateOf(after.start.wall)) : 0;
+        const int64_t seconds = before.allDay ? 0 : toDateTime(before.start).secsTo(toDateTime(after.start));
+        const int64_t days = before.allDay ? dateOf(before.start.wall).daysTo(dateOf(after.start.wall)) : 0;
         if (seconds || days) {
-            for (icalproperty *property : properties(event, ICAL_EXDATE_PROPERTY))
+            for (icalproperty* property : properties(event, ICAL_EXDATE_PROPERTY))
                 shiftTime(property, event, seconds, days);
-            for (icalcomponent *other : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
+            for (icalcomponent* other : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
                 if (!isOverride(other))
                     continue;
                 for (icalproperty_kind kind : { ICAL_RECURRENCEID_PROPERTY, ICAL_DTSTART_PROPERTY, ICAL_DTEND_PROPERTY }) {
-                    if (icalproperty *property = icalcomponent_get_first_property(other, kind))
+                    if (icalproperty* property = icalcomponent_get_first_property(other, kind))
                         shiftTime(property, other, seconds, days);
                 }
             }
@@ -1111,12 +1122,12 @@ void EventFile::setData(const EventData &data)
     // Instances of another rule, or of another kind of start, are not these instances.
     if (frequencyChanged || kindChanged) {
         removeProperties(event, ICAL_EXDATE_PROPERTY);
-        QList<icalcomponent *> stale;
-        for (icalcomponent *other : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
+        std::vector<icalcomponent*> stale;
+        for (icalcomponent* other : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
             if (isOverride(other))
-                stale.append(other);
+                stale.push_back(other);
         }
-        for (icalcomponent *other : std::as_const(stale)) {
+        for (icalcomponent* other : stale) {
             icalcomponent_remove_component(m_calendar, other);
             icalcomponent_free(other);
         }
@@ -1124,7 +1135,7 @@ void EventFile::setData(const EventData &data)
     if (kindChanged && !ruleChanged && icalcomponent_get_first_property(event, ICAL_RRULE_PROPERTY)) {
         // UNTIL has to be a date for dates and a time for times.
         const Repeat repeat = repeatOf(event, before);
-        icalproperty *property = icalcomponent_get_first_property(event, ICAL_RRULE_PROPERTY);
+        icalproperty* property = icalcomponent_get_first_property(event, ICAL_RRULE_PROPERTY);
         icalrecurrencetype rule = icalproperty_get_rrule(property);
         if (repeat.until.isValid()) {
             Repeat ending;
@@ -1137,13 +1148,13 @@ void EventFile::setData(const EventData &data)
     touch(event);
 }
 
-void EventFile::setOccurrenceData(const QString &recurrenceKey, const EventData &data)
+void EventFile::setOccurrenceData(const std::string& recurrenceKey, const EventData& data)
 {
-    icalcomponent *event = master();
+    icalcomponent* event = master();
     if (!event)
         return;
 
-    icalcomponent *changed = override(recurrenceKey);
+    icalcomponent* changed = override(recurrenceKey);
     if (!changed) {
         changed = icalcomponent_new_clone(event);
         removeProperties(changed, ICAL_RRULE_PROPERTY);
@@ -1161,20 +1172,20 @@ void EventFile::setOccurrenceData(const QString &recurrenceKey, const EventData 
     touch(changed);
 }
 
-void EventFile::resetOccurrence(const QString &recurrenceKey)
+void EventFile::resetOccurrence(const std::string& recurrenceKey)
 {
-    if (icalcomponent *changed = override(recurrenceKey)) {
+    if (icalcomponent* changed = override(recurrenceKey)) {
         icalcomponent_remove_component(m_calendar, changed);
         icalcomponent_free(changed);
     }
 }
 
-void EventFile::excludeOccurrence(const QString &recurrenceKey)
+void EventFile::excludeOccurrence(const std::string& recurrenceKey)
 {
-    icalcomponent *event = master();
+    icalcomponent* event = master();
     if (!event)
         return;
-    if (icalcomponent *changed = override(recurrenceKey)) {
+    if (icalcomponent* changed = override(recurrenceKey)) {
         icalcomponent_remove_component(m_calendar, changed);
         icalcomponent_free(changed);
     }
@@ -1183,18 +1194,23 @@ void EventFile::excludeOccurrence(const QString &recurrenceKey)
     touch(event);
 }
 
-bool EventFile::isFirstOccurrence(const QString &recurrenceKey) const
+bool EventFile::isFirstOccurrence(const std::string& recurrenceKey) const
 {
-    icalcomponent *event = master();
+    icalcomponent* event = master();
     if (!event)
         return true;
     return !keyBefore(keyOf(seriesOf(event).start), recurrenceKey);
 }
 
-static int instancesBefore(icalcomponent *event, const Series &series, const QString &recurrenceKey)
+static DateTime endOfTime()
+{
+    return DateTime(Date(9999, 12, 31), Time(0, 0));
+}
+
+static int instancesBefore(icalcomponent* event, const Series& series, const std::string& recurrenceKey)
 {
     int count = 0;
-    instances(event, series, QDateTime(), QDateTime(QDate(9999, 12, 31), QTime(0, 0)), [&](const Time &time) {
+    instances(event, series, DateTime(), endOfTime(), [&](const IcalTime& time) {
         if (!keyBefore(keyOf(time), recurrenceKey))
             return false;
         ++count;
@@ -1203,21 +1219,21 @@ static int instancesBefore(icalcomponent *event, const Series &series, const QSt
     return count;
 }
 
-bool EventFile::endBefore(const QString &recurrenceKey)
+bool EventFile::endBefore(const std::string& recurrenceKey)
 {
-    icalcomponent *event = master();
+    icalcomponent* event = master();
     if (!event || isFirstOccurrence(recurrenceKey))
         return false;
 
     const Series series = seriesOf(event);
-    Time last = series.start;
-    instances(event, series, QDateTime(), QDateTime(QDate(9999, 12, 31), QTime(0, 0)), [&](const Time &time) {
+    IcalTime last = series.start;
+    instances(event, series, DateTime(), endOfTime(), [&](const IcalTime& time) {
         if (!keyBefore(keyOf(time), recurrenceKey))
             return false;
         last = time;
         return true;
     });
-    for (icalproperty *property : properties(event, ICAL_RRULE_PROPERTY)) {
+    for (icalproperty* property : properties(event, ICAL_RRULE_PROPERTY)) {
         icalrecurrencetype rule = icalproperty_get_rrule(property);
         rule.count = 0;
         if (series.allDay) {
@@ -1232,8 +1248,8 @@ bool EventFile::endBefore(const QString &recurrenceKey)
     }
 
     // What came after it belongs to the part that was cut off.
-    const auto later = [&](icalproperty *property, icalcomponent *owner) {
-        icalvalue *value = icalproperty_get_value(property);
+    const auto later = [&](icalproperty* property, icalcomponent* owner) {
+        icalvalue* value = icalproperty_get_value(property);
         if (!value)
             return false;
         icaltimetype time;
@@ -1244,22 +1260,22 @@ bool EventFile::endBefore(const QString &recurrenceKey)
         return !keyBefore(keyOf(makeTime(time, property, owner)), recurrenceKey);
     };
     for (icalproperty_kind kind : { ICAL_EXDATE_PROPERTY, ICAL_RDATE_PROPERTY }) {
-        QList<icalproperty *> remove;
-        for (icalproperty *property : properties(event, kind)) {
+        std::vector<icalproperty*> remove;
+        for (icalproperty* property : properties(event, kind)) {
             if (later(property, event))
-                remove.append(property);
+                remove.push_back(property);
         }
-        for (icalproperty *property : std::as_const(remove)) {
+        for (icalproperty* property : remove) {
             icalcomponent_remove_property(event, property);
             icalproperty_free(property);
         }
     }
-    QList<icalcomponent *> remove;
-    for (icalcomponent *other : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
+    std::vector<icalcomponent*> remove;
+    for (icalcomponent* other : components(m_calendar, ICAL_VEVENT_COMPONENT)) {
         if (isOverride(other) && later(icalcomponent_get_first_property(other, ICAL_RECURRENCEID_PROPERTY), other))
-            remove.append(other);
+            remove.push_back(other);
     }
-    for (icalcomponent *other : std::as_const(remove)) {
+    for (icalcomponent* other : remove) {
         icalcomponent_remove_component(m_calendar, other);
         icalcomponent_free(other);
     }
@@ -1267,9 +1283,9 @@ bool EventFile::endBefore(const QString &recurrenceKey)
     return true;
 }
 
-std::unique_ptr<EventFile> EventFile::splitAt(const QString &recurrenceKey, const EventData &data)
+std::unique_ptr<EventFile> EventFile::splitAt(const std::string& recurrenceKey, const EventData& data)
 {
-    icalcomponent *event = master();
+    icalcomponent* event = master();
     if (!event || isFirstOccurrence(recurrenceKey))
         return nullptr;
 
@@ -1277,47 +1293,47 @@ std::unique_ptr<EventFile> EventFile::splitAt(const QString &recurrenceKey, cons
     const int before = instancesBefore(event, series, recurrenceKey);
 
     std::unique_ptr<EventFile> rest = clone();
-    icalcomponent *restEvent = rest->master();
-    const QString uid = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    for (icalcomponent *other : components(rest->m_calendar, ICAL_VEVENT_COMPONENT))
-        icalcomponent_set_uid(other, uid.toUtf8().constData());
+    icalcomponent* restEvent = rest->master();
+    const std::string uid = createUuid();
+    for (icalcomponent* other : components(rest->m_calendar, ICAL_VEVENT_COMPONENT))
+        icalcomponent_set_uid(other, uid.c_str());
 
     // The rest starts where it was cut, still lasting as long; earlier
     // changes and removals stay with the first part.
-    QList<icalcomponent *> earlier;
-    for (icalcomponent *other : components(rest->m_calendar, ICAL_VEVENT_COMPONENT)) {
+    std::vector<icalcomponent*> earlier;
+    for (icalcomponent* other : components(rest->m_calendar, ICAL_VEVENT_COMPONENT)) {
         if (isOverride(other) && keyBefore(keyOf(propertyTime(other, ICAL_RECURRENCEID_PROPERTY)), recurrenceKey))
-            earlier.append(other);
+            earlier.push_back(other);
     }
-    for (icalcomponent *other : std::as_const(earlier)) {
+    for (icalcomponent* other : earlier) {
         icalcomponent_remove_component(rest->m_calendar, other);
         icalcomponent_free(other);
     }
-    QList<icalproperty *> removed;
-    for (icalproperty *property : properties(restEvent, ICAL_EXDATE_PROPERTY)) {
+    std::vector<icalproperty*> removed;
+    for (icalproperty* property : properties(restEvent, ICAL_EXDATE_PROPERTY)) {
         if (keyBefore(keyOf(makeTime(icalproperty_get_exdate(property), property, restEvent)), recurrenceKey))
-            removed.append(property);
+            removed.push_back(property);
     }
-    for (icalproperty *property : std::as_const(removed)) {
+    for (icalproperty* property : removed) {
         icalcomponent_remove_property(restEvent, property);
         icalproperty_free(property);
     }
 
-    const Time start = instanceTime(series, recurrenceKey);
+    const IcalTime start = instanceTime(series, recurrenceKey);
     removeProperties(restEvent, ICAL_DTSTART_PROPERTY);
     removeProperties(restEvent, ICAL_DTEND_PROPERTY);
     removeProperties(restEvent, ICAL_DURATION_PROPERTY);
-    Time end = start;
+    IcalTime end = start;
     if (series.allDay)
         end.wall = dateWall(dateOf(start.wall).addDays(series.days));
     else
         end.wall = toWall(toDateTime(start).addSecs(series.seconds), start.zone);
     icalcomponent_add_property(restEvent, newTimeProperty(ICAL_DTSTART_PROPERTY, start));
     icalcomponent_add_property(restEvent, newTimeProperty(ICAL_DTEND_PROPERTY, end));
-    for (icalproperty *property : properties(restEvent, ICAL_RRULE_PROPERTY)) {
+    for (icalproperty* property : properties(restEvent, ICAL_RRULE_PROPERTY)) {
         icalrecurrencetype rule = icalproperty_get_rrule(property);
         if (rule.count > 0) {
-            rule.count = qMax(1, rule.count - before);
+            rule.count = std::max(1, rule.count - before);
             icalproperty_set_rrule(property, rule);
         }
     }

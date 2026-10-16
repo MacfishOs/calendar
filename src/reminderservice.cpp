@@ -2,28 +2,120 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "reminderservice.h"
-#include "applicationlauncher.h"
 #include "calendarstore.h"
-#include "cutefishnotification.h"
+#include "localedata.h"
 
-#include <QLocale>
+#include <algorithm>
+
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char** environ;
+
+namespace dbus = cutefish::base::dbus;
 
 // A snoozed reminder comes back after this long.
 static const int SnoozeMinutes = 10;
 // Alarms just before the service started, as at login, still show.
 static const int CatchUpMinutes = 10;
 // Checked at least this often, so a changed clock is noticed.
-static const int LongestWaitMs = 60 * 60 * 1000;
+static const int64_t LongestWaitSeconds = 60 * 60;
 
-ReminderService::ReminderService(CalendarStore *store, QObject *parent)
-    : QObject(parent)
-    , m_store(store)
+static std::string escaped(const std::string& text)
+{
+    std::string result;
+    for (char c : text) {
+        switch (c) {
+        case '&':
+            result += "&amp;";
+            break;
+        case '<':
+            result += "&lt;";
+            break;
+        case '>':
+            result += "&gt;";
+            break;
+        case '"':
+            result += "&quot;";
+            break;
+        default:
+            result.push_back(c);
+        }
+    }
+    return result;
+}
+
+static std::string timeText(const Occurrence& occurrence)
+{
+    const Date today = Date::currentDate();
+    if (occurrence.allDay) {
+        if (occurrence.firstDay == today)
+            return "Today, all day";
+        if (occurrence.firstDay == today.addDays(1))
+            return "Tomorrow, all day";
+        return LocaleData::longDate(occurrence.firstDay);
+    }
+
+    std::string range = LocaleData::timeText(occurrence.start.time());
+    if (occurrence.end > occurrence.start)
+        range += " – " + LocaleData::timeText(occurrence.end.time());
+    if (occurrence.start.date() == today)
+        return range;
+    if (occurrence.start.date() == today.addDays(1))
+        return "Tomorrow, " + range;
+    return LocaleData::longDate(occurrence.start.date()) + ", " + range;
+}
+
+// Through the session's application runtime, or as a process of its own
+// when the runtime is not there.
+static void startCalendar(dbus::Connection* bus, const std::vector<std::string>& command)
+{
+    dbus::Proxy runtime(bus, "com.cutefish.AppRuntime", "/AppRuntime", "com.cutefish.AppRuntime");
+    runtime.setTimeout(std::chrono::seconds(5));
+    const dbus::Reply reply = runtime.call("launchCommand", std::string("cutefish-calendar"), command, std::string(),
+                                           std::string());
+    if (reply.value<uint32_t>(0).value_or(0) != 0)
+        return;
+
+    std::vector<char*> arguments;
+    for (const std::string& argument : command)
+        arguments.push_back(const_cast<char*>(argument.c_str()));
+    arguments.push_back(nullptr);
+    // Detached: the child starts the calendar and leaves at once.
+    const pid_t child = fork();
+    if (child == 0) {
+        setsid();
+        pid_t pid;
+        _exit(posix_spawnp(&pid, arguments[0], nullptr, nullptr, arguments.data(), environ) == 0 ? 0 : 1);
+    }
+    if (child > 0)
+        waitpid(child, nullptr, 0);
+}
+
+ReminderService::ReminderService(CalendarStore* store, dbus::Connection* bus)
+    : m_store(store)
+    , m_bus(bus)
+    , m_notifications(bus, "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                      "org.freedesktop.Notifications")
 {
     m_timer.setSingleShot(true);
-    m_timer.setTimerType(Qt::VeryCoarseTimer);
-    connect(&m_timer, &QTimer::timeout, this, &ReminderService::check);
-    connect(m_store, &CalendarStore::changed, this, &ReminderService::check);
-    m_checked = QDateTime::currentDateTime().addSecs(-CatchUpMinutes * 60);
+    m_timer.onTimeout = [this] { check(); };
+    m_changed = m_store->changed.connect([this] { check(); });
+    m_checked = DateTime::currentDateTime().addSecs(-CatchUpMinutes * 60);
+
+    m_actionInvoked = m_notifications.onSignal("ActionInvoked", [this](const dbus::Message& message) {
+        uint32_t id = 0;
+        std::string key;
+        if (message.read(id, key))
+            actionInvoked(id, key);
+    });
+    m_closed = m_notifications.onSignal("NotificationClosed", [this](const dbus::Message& message) {
+        uint32_t id = 0;
+        uint32_t reason = 0;
+        if (message.read(id, reason))
+            m_shown.erase(id);
+    });
 }
 
 void ReminderService::check()
@@ -31,94 +123,86 @@ void ReminderService::check()
     if (!m_store->isReady())
         return;
 
-    const QDateTime now = QDateTime::currentDateTime();
-    const QDateTime until = now.addSecs(1);
-    QList<Reminder> due = m_checked < until ? Reminders::due(*m_store, m_checked, until) : QList<Reminder>();
+    const DateTime now = DateTime::currentDateTime();
+    const DateTime until = now.addSecs(1);
+    std::vector<Reminder> due = m_checked < until ? Reminders::due(*m_store, m_checked, until) : std::vector<Reminder>();
     for (auto it = m_snoozed.begin(); it != m_snoozed.end();) {
         if (it->time <= now) {
-            due.append(*it);
+            due.push_back(*it);
             it = m_snoozed.erase(it);
         } else {
             ++it;
         }
     }
 
-    for (const Reminder &reminder : std::as_const(due)) {
-        const QString id = reminder.id();
+    for (const Reminder& reminder : due) {
+        const std::string id = reminder.id();
         if (m_fired.contains(id))
             continue;
-        m_fired.insert(id, reminder.time);
+        m_fired.emplace(id, reminder.time);
         // Missed while asleep and over by now: no longer worth a notification.
-        const Occurrence &occurrence = reminder.occurrence;
-        const QDateTime end = occurrence.allDay ? QDateTime(occurrence.lastDay.addDays(1), QTime(0, 0)) : occurrence.end;
+        const Occurrence& occurrence = reminder.occurrence;
+        const DateTime end = occurrence.allDay ? DateTime(occurrence.lastDay.addDays(1), Time(0, 0)) : occurrence.end;
         if (end <= now && reminder.time < now.addSecs(-CatchUpMinutes * 60))
             continue;
         notify(reminder);
     }
     m_checked = until;
-    m_fired.removeIf([&now](const QHash<QString, QDateTime>::iterator it) {
-        return it.value() < now.addDays(-1);
+    std::erase_if(m_fired, [&now](const auto& item) {
+        return item.second < now.addDays(-1);
     });
 
-    QDateTime next = now.addMSecs(LongestWaitMs);
-    const QList<Reminder> upcoming = Reminders::due(*m_store, until, next);
-    if (!upcoming.isEmpty())
-        next = qMin(next, upcoming.first().time);
-    for (const Reminder &reminder : std::as_const(m_snoozed))
-        next = qMin(next, reminder.time);
-    m_timer.start(int(qBound<qint64>(1000, now.msecsTo(next), qint64(LongestWaitMs))));
+    DateTime next = now.addSecs(LongestWaitSeconds);
+    const std::vector<Reminder> upcoming = Reminders::due(*m_store, until, next);
+    if (!upcoming.empty())
+        next = std::min(next, upcoming.front().time);
+    for (const Reminder& reminder : m_snoozed)
+        next = std::min(next, reminder.time);
+    m_timer.start(std::chrono::seconds(std::clamp<int64_t>(now.secsTo(next), 1, LongestWaitSeconds)));
 }
 
-static QString timeText(const Occurrence &occurrence)
+void ReminderService::notify(const Reminder& reminder)
 {
-    const QLocale locale;
-    const QDate today = QDate::currentDate();
-    if (occurrence.allDay) {
-        if (occurrence.firstDay == today)
-            return ReminderService::tr("Today, all day");
-        if (occurrence.firstDay == today.addDays(1))
-            return ReminderService::tr("Tomorrow, all day");
-        return locale.toString(occurrence.firstDay, QLocale::LongFormat);
+    const Occurrence& occurrence = reminder.occurrence;
+    std::string body = timeText(occurrence);
+    if (!occurrence.location.empty())
+        body += '\n' + occurrence.location;
+    const std::vector<std::string> actions{"default", "", "snooze",
+                                           "Snooze " + std::to_string(SnoozeMinutes) + " Minutes"};
+    const dbus::VariantMap hints{
+        {"urgency", dbus::Variant(uint8_t(1))},
+        {"desktop-entry", dbus::Variant(std::string("cutefish-calendar"))},
+    };
+
+    // The reply brings the id that its actions arrive with.
+    std::erase_if(m_pending, [](const Pending& pending) { return *pending.done; });
+    auto done = std::make_shared<bool>(false);
+    dbus::PendingCall call = m_notifications.callAsync("Notify", [this, reminder, done](const dbus::Reply& reply) {
+        *done = true;
+        if (const std::optional<uint32_t> id = reply.value<uint32_t>(0); id && *id != 0)
+            m_shown[*id] = reminder;
+    }, std::string(), uint32_t(0), std::string("office-calendar"),
+       occurrence.summary.empty() ? std::string("New Event") : occurrence.summary, escaped(body), actions, hints,
+       int32_t(0));
+    m_pending.push_back({std::move(call), done});
+}
+
+void ReminderService::actionInvoked(uint32_t id, const std::string& key)
+{
+    const auto it = m_shown.find(id);
+    if (it == m_shown.end())
+        return;
+    const Reminder reminder = it->second;
+    m_shown.erase(it);
+
+    if (key == "snooze") {
+        Reminder later = reminder;
+        later.time = DateTime::currentDateTime().addSecs(SnoozeMinutes * 60);
+        m_snoozed.push_back(later);
+        check();
+        return;
     }
-
-    QString range = locale.toString(occurrence.start.time(), QLocale::ShortFormat);
-    if (occurrence.end > occurrence.start)
-        range += QStringLiteral(" – ") + locale.toString(occurrence.end.time(), QLocale::ShortFormat);
-    if (occurrence.start.date() == today)
-        return range;
-    if (occurrence.start.date() == today.addDays(1))
-        return ReminderService::tr("Tomorrow, %1").arg(range);
-    return locale.toString(occurrence.start.date(), QLocale::LongFormat) + QStringLiteral(", ") + range;
-}
-
-void ReminderService::notify(const Reminder &reminder)
-{
-    const Occurrence &occurrence = reminder.occurrence;
-    auto *notification = new Cutefish::Notification(this);
-    notification->setDesktopEntry(QStringLiteral("cutefish-calendar"));
-    notification->setIconName(QStringLiteral("office-calendar"));
-    notification->setSummary(occurrence.summary.isEmpty() ? tr("New Event") : occurrence.summary);
-    QString body = timeText(occurrence);
-    if (!occurrence.location.isEmpty())
-        body += QLatin1Char('\n') + occurrence.location;
-    notification->setBody(body.toHtmlEscaped());
-    notification->setTimeout(0);
-    notification->addAction(QStringLiteral("default"));
-    notification->addAction(QStringLiteral("snooze"), tr("Snooze %1 Minutes").arg(SnoozeMinutes));
-    notification->setAutoDelete(true);
-
-    const QDate date = occurrence.allDay ? occurrence.firstDay : occurrence.start.date();
-    connect(notification, &Cutefish::Notification::actionInvoked, this, [this, reminder, date](const QString &key) {
-        if (key == QLatin1String("snooze")) {
-            Reminder later = reminder;
-            later.time = QDateTime::currentDateTime().addSecs(SnoozeMinutes * 60);
-            m_snoozed.append(later);
-            check();
-        } else {
-            ApplicationLauncher::startDetached({ QStringLiteral("cutefish-calendar"), QStringLiteral("--date"),
-                                                 date.toString(Qt::ISODate) },
-                                               QString(), QStringLiteral("cutefish-calendar"));
-        }
-    });
-    notification->show();
+    const Occurrence& occurrence = reminder.occurrence;
+    const Date date = occurrence.allDay ? occurrence.firstDay : occurrence.start.date();
+    startCalendar(m_bus, {"cutefish-calendar", "--date", date.toIsoString()});
 }
