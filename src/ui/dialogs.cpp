@@ -63,12 +63,6 @@ public:
 protected:
     void layout() override
     {
-        // Here, so a theme change, which lays every window out again, recolours it.
-        Window* window = this->window();
-        if (window && Theme::current().secondBackground != m_background) {
-            m_background = Theme::current().secondBackground;
-            window->setBackgroundColor(m_background);
-        }
         m_column->setGeometry({0, 0, geometry().width, m_column->heightForWidth(geometry().width)});
         m_close->setGeometry({geometry().width - 8 - 32, 8, 32, 32});
     }
@@ -84,7 +78,6 @@ private:
     SmallDialog* m_dialog;
     ColumnLayout* m_column;
     HeaderButton* m_close;
-    Color m_background{0, 0, 0, 0};
 };
 
 SmallDialog::SmallDialog(Window* parent, std::string title, double width)
@@ -95,6 +88,7 @@ SmallDialog::SmallDialog(Window* parent, std::string title, double width)
     auto root = std::make_unique<Root>(this);
     m_column = root->column();
     m_window->setContentView(std::move(root));
+    m_window->setBackgroundColor(ColorId::SecondBackground);
     m_window->setTitle(title);
     m_window->setTransientParent(parent, true);
     m_window->onCloseRequested = [this] { close(); };
@@ -123,7 +117,7 @@ Label* SmallDialog::addText(const std::string& text)
 {
     Label* label = m_texts->addChild<Label>(text);
     label->setFontSize(TitleSize);
-    label->setColor(Theme::current().disabledText);
+    label->setColor(ColorId::DisabledText);
     label->setWrap(true);
     label->setFixedLineHeight(20);
     label->setLayoutHints({.fillWidth = true});
