@@ -37,9 +37,10 @@ inline int weekdayOfColumn(int column, int firstDay)
     return (firstDay % 7 + column) % 7;
 }
 
+// Minute 24 * 60 is the next midnight.
 inline DateTime atMinute(Date date, int minute)
 {
-    return DateTime(date, Time(minute / 60, minute % 60));
+    return DateTime(date.addDays(minute / (24 * 60)), Time(minute % (24 * 60) / 60, minute % 60));
 }
 
 inline int minuteOf(const DateTime& dateTime)

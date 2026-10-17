@@ -334,6 +334,35 @@ TEST_F(UiTest, DraggingOnTheHoursMarksANewEvent)
     EXPECT_EQ(window.editor()->event().end, DateTime(window.currentDate(), Time(11, 30)));
 }
 
+TEST_F(UiTest, ANewEventMarkedToTheLastHourEndsAtMidnight)
+{
+    m_model->setView("day");
+    CalendarWindow& window = open();
+    Window* frame = window.window();
+    showHour(frame, 20);
+    View* canvas = static_cast<ScrollView*>(find(frame, "hourGrid").front())->contentView();
+    const Date next = window.currentDate().addDays(1);
+
+    const PointF from = canvas->mapToWindow({300, 6 + 23 * 48 + 2});
+    const PointF to = canvas->mapToWindow({300, 6 + 24 * 48 + 4});
+    TestInput::press(*frame, from);
+    TestInput::movePointer(*frame, {from.x, from.y + 30});
+    TestInput::movePointer(*frame, to);
+    TestInput::release(*frame, to);
+    ASSERT_TRUE(window.editor());
+    EXPECT_EQ(window.editor()->event().start, DateTime(window.currentDate(), Time(23, 0)));
+    EXPECT_EQ(window.editor()->event().end, DateTime(next, Time(0, 0)));
+    window.editor()->close();
+    runPosted();
+
+    // A double click in the last hour gives it an hour too.
+    TestInput::click(*frame, canvas->mapToWindow({300, 6 + 23.5 * 48 + 10}));
+    TestInput::click(*frame, canvas->mapToWindow({300, 6 + 23.5 * 48 + 10}));
+    ASSERT_TRUE(window.editor());
+    EXPECT_EQ(window.editor()->event().start, DateTime(window.currentDate(), Time(23, 0)));
+    EXPECT_EQ(window.editor()->event().end, DateTime(next, Time(0, 0)));
+}
+
 TEST_F(UiTest, DraggingABlockMovesTheEvent)
 {
     addEvent("Review", Date::currentDate(), 15 * 60, 60);
