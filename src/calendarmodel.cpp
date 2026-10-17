@@ -358,14 +358,11 @@ std::vector<EventItem> CalendarModel::search(const std::string& text) const
         Match match;
         match.upcoming = file->nextOccurrence(startOfDay(now.date()), SearchHorizon, &match.occurrence);
         if (!match.upcoming) {
-            // Over by now: shown at its first occurrence.
+            // Over by now: shown at its first occurrence, which may come after a removed or moved one.
             const EventData data = file->data();
-            std::vector<Occurrence> first;
             const Date day = data.allDay ? data.startDate : data.start.date();
-            file->expand(day, day.addDays(1), &first);
-            if (first.empty())
+            if (!file->nextOccurrence(startOfDay(day), SearchHorizon, &match.occurrence))
                 continue;
-            match.occurrence = first.front();
         }
         match.occurrence.key = key;
         match.occurrence.calendarId = calendarId;

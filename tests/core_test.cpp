@@ -819,6 +819,31 @@ TEST(ModelTest, DragMove)
     EXPECT_EQ(due.front().time, DateTime(Date(2026, 10, 5), Time(9, 55)));
 }
 
+TEST(ModelTest, SearchFindsAPastSeriesWithoutItsFirstOccurrence)
+{
+    base::EventLoop loop;
+    TemporaryDirectory dir;
+    CalendarStore store(dir.filePath("calendars"));
+    CalendarModel app(&store, dir.filePath("calendar.conf"));
+    store.load();
+
+    EventForm event = app.newEventData(DateTime(Date(2020, 1, 6), Time(9, 0)), DateTime(Date(2020, 1, 6), Time(10, 0)),
+                                       false);
+    event.title = "Standup";
+    event.repeat = Repeat::Daily;
+    event.repeatEnd = 2;
+    event.repeatCount = 3;
+    EXPECT_TRUE(app.saveEvent(event, EventFile::AllEvents));
+    const std::vector<Occurrence> first = store.occurrences(Date(2020, 1, 6), Date(2020, 1, 7));
+    ASSERT_EQ(first.size(), 1u);
+    EXPECT_TRUE(app.removeEvent(first.front().key, first.front().recurrenceKey, EventFile::ThisEvent));
+
+    const std::vector<EventItem> found = app.search("standup");
+    ASSERT_EQ(found.size(), 1u);
+    EXPECT_FALSE(found.front().upcoming);
+    EXPECT_EQ(found.front().firstDay, Date(2020, 1, 7));
+}
+
 TEST(ModelTest, SettingsKeepTheirFormat)
 {
     base::EventLoop loop;
