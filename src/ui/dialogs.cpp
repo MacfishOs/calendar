@@ -11,6 +11,7 @@
 #include <base/event_loop.h>
 #include <ui/application.h>
 #include <ui/cell_layout.h>
+#include <ui/color_provider.h>
 #include <ui/combo_box.h>
 #include <ui/dialog_window.h>
 #include <ui/drop_down_popup.h>
@@ -655,10 +656,9 @@ void DateButton::layout()
 void DateButton::paint(Painter& painter)
 {
     const Theme& theme = Theme::current();
-    const Color base = theme.alternateBackground;
-    const Color color = m_pressed ? (theme.darkMode ? base.lighter(1.1) : base.darker(1.2)) : base;
-    painter.drawRoundedRect(localRect(), {theme.smallRadius, 0, themeCorners()}, color, 1,
-                            isPopupOpen() || hasFocus() ? theme.highlight : color);
+    const Color background = color(m_pressed ? ColorId::ComboBoxBackgroundPressed : ColorId::ComboBoxBackground);
+    painter.drawRoundedRect(localRect(), {theme.smallRadius, 0, themeCorners()}, background, 1,
+                            isPopupOpen() || hasFocus() ? color(ColorId::ComboBoxFocusBorder) : background);
 }
 
 void DateButton::pointerPress(const PointerEvent& event)

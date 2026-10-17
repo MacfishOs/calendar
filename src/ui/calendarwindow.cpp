@@ -62,6 +62,7 @@ CalendarWindow::CalendarWindow(CalendarModel* model, bool restoresSize)
         m_root->content()->setSearchText(text);
     };
     m_window->onStatesChanged = [this] { m_root->headerBar()->requestLayout(); };
+    m_window->onActiveChanged = [this] { m_root->headerBar()->requestLayout(); };
     // A press on the calendar puts away the sidebar shown over it.
     m_window->onPointerPressed = [this](PointF position, MouseButton) {
         const double sidebarEnd = SidebarWidth * m_sidebarReveal;

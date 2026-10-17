@@ -3,6 +3,7 @@
 
 #include "minimonth.h"
 #include "calendarmodel.h"
+#include "colors.h"
 #include "dates.h"
 #include "localedata.h"
 #include "style.h"
@@ -192,7 +193,7 @@ void MiniMonth::paint(Painter& painter)
             const int end = std::min(last, start / 7 * 7 + 6);
             const RectF cell = cellRect(start);
             const RectF band{cell.x + 2, cell.y + (m_cellHeight - plate) / 2, (end - start + 1) * cellWidth() - 4, plate};
-            painter.fillRoundedRect(band, plate / 2, Style::withAlpha(theme.highlight, theme.darkMode ? 0.15 : 0.09));
+            painter.fillRoundedRect(band, plate / 2, color(CalendarColor::MiniMonthRange));
         }
     }
 
@@ -204,7 +205,7 @@ void MiniMonth::paint(Painter& painter)
     const int today = indexOf(m_model->today());
     const int selected = indexOf(m_selected);
     if (selected >= 0 && selected != today && inMonth(selected) && !m_rangeStart)
-        platedCell(selected, Style::withAlpha(theme.highlight, theme.darkMode ? 0.25 : 0.15));
+        platedCell(selected, color(CalendarColor::MiniMonthSelected));
     if (today >= 0 && inMonth(today))
         platedCell(today, theme.highlight);
 

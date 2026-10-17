@@ -365,7 +365,14 @@ TimeGridView::TimeGridView(CalendarWindow* window, int days)
 
     CalendarModel* model = window->model();
     m_subscriptions.push_back(model->revisionChanged.connect([this] { refresh(); }));
-    m_subscriptions.push_back(model->todayChanged.connect([this] { requestLayout(); requestPaint(); }));
+    m_subscriptions.push_back(model->todayChanged.connect([this] {
+        // The headers mark today and the canvas draws the now line as they lay out.
+        for (Header* header : m_headers)
+            header->requestLayout();
+        m_canvas->requestLayout();
+        requestLayout();
+        requestPaint();
+    }));
     m_subscriptions.push_back(model->weekStartChanged.connect([this] {
         refresh();
         scrollToWorkingHours();
@@ -495,7 +502,7 @@ void TimeGridView::scrollToWorkingHours()
     // A little above the hour, so its label is not cut by the strip.
     // Applied once the scroll view knows the hours' height.
     m_pendingScroll = std::max(0.0, hour * HourHeight - 6);
-    requestLayout();
+    m_canvas->requestLayout();
 }
 
 void TimeGridView::layout()

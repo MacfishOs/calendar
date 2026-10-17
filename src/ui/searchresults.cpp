@@ -3,6 +3,7 @@
 
 #include "searchresults.h"
 #include "calendarwindow.h"
+#include "colors.h"
 #include "localedata.h"
 #include "style.h"
 
@@ -95,7 +96,7 @@ protected:
         const RectF background{6, 0, geometry().width - 12, geometry().height};
         if (m_window->isSelected(m_event))
             painter.fillRoundedRect(background, theme.smallRadius,
-                                    Style::withAlpha(theme.highlight, theme.darkMode ? 0.25 : 0.12));
+                                    color(CalendarColor::SearchResultSelected));
         else if (m_hovered)
             painter.fillRoundedRect(background, theme.smallRadius, Style::withAlpha(theme.text, 0.04));
         painter.fillEllipse({16, 14, 8, 8}, Style::toColor(m_event.color));

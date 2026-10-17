@@ -3,6 +3,7 @@
 
 #include "monthview.h"
 #include "calendarwindow.h"
+#include "colors.h"
 #include "dates.h"
 #include "eventviews.h"
 #include "localedata.h"
@@ -289,7 +290,7 @@ void MonthView::paint(Painter& painter)
     for (int i = 0; i < 7; ++i) {
         if (std::find(weekend.begin(), weekend.end(), Dates::weekdayOfColumn(i, firstDay)) != weekend.end()) {
             painter.fillRect({gutter + i * cellWidth, HeaderHeight, cellWidth, height - HeaderHeight},
-                             Style::withAlpha(theme.text, theme.darkMode ? 0.03 : 0.02));
+                             color(CalendarColor::WeekendColumn));
         }
     }
 
@@ -297,7 +298,7 @@ void MonthView::paint(Painter& painter)
     if (selected >= 0) {
         painter.fillRect({gutter + (selected % 7) * cellWidth, HeaderHeight + (selected / 7) * rowHeight, cellWidth,
                           rowHeight},
-                         Style::withAlpha(theme.highlight, theme.darkMode ? 0.08 : 0.04));
+                         color(CalendarColor::SelectedDay));
     }
 
     for (int i = 0; i < 5; ++i)

@@ -35,6 +35,7 @@ target_link_libraries(calendar-core PUBLIC Cutefish::ToolkitBase PkgConfig::LIBI
 add_library(calendar-ui STATIC
     src/ui/calendarroot.cpp
     src/ui/calendarwindow.cpp
+    src/ui/colors.cpp
     src/ui/dialogs.cpp
     src/ui/eventdialog.cpp
     src/ui/eventviews.cpp
