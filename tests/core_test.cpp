@@ -615,6 +615,26 @@ TEST(EventLayoutTest, Days)
     EXPECT_TRUE(find(4, 1).continuesBefore);
 }
 
+// A file the store cannot read keeps its name: a new event of the same UID
+// is written next to it, not over it.
+TEST(StoreTest, UnreadableFileIsNotOverwritten)
+{
+    base::EventLoop loop;
+    TemporaryDirectory dir;
+    CalendarStore store(dir.path());
+    store.load();
+    const std::string work = store.createCalendar("Work", Rgb{0xff, 0x5c, 0x6d});
+    ASSERT_TRUE(base::file::writeAtomically(dir.filePath(work + "/same-uid.ics"), "BEGIN:VCALENDAR\r\nbroken"));
+    store.load();
+    EXPECT_EQ(store.eventCount(work), 0);
+
+    const std::string key = store.addEvent(work, EventFile::fromData(calendarText(
+        "BEGIN:VEVENT\nUID:same-uid\nDTSTART:20261020T100000Z\nDTEND:20261020T110000Z\nSUMMARY:New\nEND:VEVENT\n")));
+    ASSERT_FALSE(key.empty());
+    EXPECT_EQ(key, work + "/same-uid-2.ics");
+    EXPECT_EQ(base::file::read(dir.filePath(work + "/same-uid.ics")).value_or(""), "BEGIN:VCALENDAR\r\nbroken");
+}
+
 TEST(StoreTest, RoundTrip)
 {
     base::EventLoop loop;

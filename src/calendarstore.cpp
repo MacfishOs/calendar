@@ -283,8 +283,13 @@ std::string CalendarStore::fileNameFor(const std::string& calendarId, const std:
 {
     static const std::regex safe("^[A-Za-z0-9@._-]{1,96}$");
     const std::string base = std::regex_match(uid, safe) ? uid : sha1Hex(uid);
+    // A file this store could not read is on disk all the same.
+    const auto taken = [&](const std::string& name) {
+        std::error_code error;
+        return m_events.contains(calendarId + '/' + name) || fs::exists(pathOf(calendarId + '/' + name), error);
+    };
     std::string name = base + ".ics";
-    for (int i = 2; m_events.contains(calendarId + '/' + name); ++i)
+    for (int i = 2; taken(name); ++i)
         name = base + '-' + std::to_string(i) + ".ics";
     return name;
 }
