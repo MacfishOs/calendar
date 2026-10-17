@@ -1256,15 +1256,19 @@ static DateTime endOfTime()
     return DateTime(Date(9999, 12, 31), Time(0, 0));
 }
 
+// As COUNT counts them: instances of the rule, not the ones RDATE adds.
 static int instancesBefore(icalcomponent* event, const Series& series, const std::string& recurrenceKey)
 {
+    icalcomponent* rule = icalcomponent_new_clone(event);
+    removeProperties(rule, ICAL_RDATE_PROPERTY);
     int count = 0;
-    instances(event, series, DateTime(), endOfTime(), [&](const IcalTime& time) {
+    instances(rule, series, DateTime(), endOfTime(), [&](const IcalTime& time) {
         if (!keyBefore(keyOf(time), recurrenceKey))
             return false;
         ++count;
         return true;
     });
+    icalcomponent_free(rule);
     return count;
 }
 
@@ -1279,7 +1283,9 @@ bool EventFile::endBefore(const std::string& recurrenceKey)
     instances(event, series, DateTime(), endOfTime(), [&](const IcalTime& time) {
         if (!keyBefore(keyOf(time), recurrenceKey))
             return false;
-        last = time;
+        // RDATE instances come after the rule's, whenever they are.
+        if (keyBefore(keyOf(last), keyOf(time)))
+            last = time;
         return true;
     });
     for (icalproperty* property : properties(event, ICAL_RRULE_PROPERTY)) {
@@ -1361,6 +1367,13 @@ std::unique_ptr<EventFile> EventFile::splitAt(const std::string& recurrenceKey, 
     std::vector<icalproperty*> removed;
     for (icalproperty* property : properties(restEvent, ICAL_EXDATE_PROPERTY)) {
         if (keyBefore(keyOf(makeTime(icalproperty_get_exdate(property), property, restEvent)), recurrenceKey))
+            removed.push_back(property);
+    }
+    for (icalproperty* property : properties(restEvent, ICAL_RDATE_PROPERTY)) {
+        const icaldatetimeperiodtype value = icalproperty_get_rdate(property);
+        const IcalTime time = makeTime(icaltime_is_null_time(value.time) ? value.period.start : value.time, property,
+                                       restEvent);
+        if (keyBefore(keyOf(time), recurrenceKey))
             removed.push_back(property);
     }
     for (icalproperty* property : removed) {

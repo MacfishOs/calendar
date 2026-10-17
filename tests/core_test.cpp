@@ -469,6 +469,30 @@ TEST(EventFileTest, SplitCountedSeries)
     EXPECT_EQ(first.back().summary, "Course");
 }
 
+TEST(EventFileTest, SplitCountedSeriesWithAddedDates)
+{
+    const auto file = EventFile::fromData(calendarText(
+            "BEGIN:VEVENT\nUID:added\nDTSTART:20261005T090000\nDURATION:PT1H\nRRULE:FREQ=DAILY;COUNT=5\n"
+            "RDATE:20261006T200000\nSUMMARY:Shift\nEND:VEVENT\n"));
+    ASSERT_TRUE(file);
+    const std::vector<Occurrence> all = expand(*file, Date(2026, 10, 1), Date(2026, 11, 1));
+    ASSERT_EQ(all.size(), 6u);
+
+    // The fourth of the rule's five, after the added one.
+    ASSERT_EQ(all[4].start, DateTime(Date(2026, 10, 8), Time(9, 0)));
+    EventData later = file->data(all[4].recurrenceKey);
+    later.summary = "Shift, new desk";
+    const auto rest = file->splitAt(all[4].recurrenceKey, later);
+    ASSERT_TRUE(rest);
+
+    const std::vector<Occurrence> first = expand(*file, Date(2026, 10, 1), Date(2026, 11, 1));
+    const std::vector<Occurrence> second = expand(*rest, Date(2026, 10, 1), Date(2026, 11, 1));
+    ASSERT_EQ(first.size(), 4u);
+    ASSERT_EQ(second.size(), 2u);
+    EXPECT_EQ(second[0].start, DateTime(Date(2026, 10, 8), Time(9, 0)));
+    EXPECT_EQ(second[1].start, DateTime(Date(2026, 10, 9), Time(9, 0)));
+}
+
 TEST(EventFileTest, Alarms)
 {
     EventData data = timedEvent("Call", DateTime(Date(2026, 10, 5), Time(9, 0)), 30);
