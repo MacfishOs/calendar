@@ -639,14 +639,17 @@ void CalendarWindow::openSettings()
 
 void CalendarWindow::openAbout()
 {
-    if (!m_aboutDialog) {
-        m_aboutDialog = std::make_unique<AboutDialog>(m_window.get());
-        m_aboutDialog->setName("Calendar");
-        m_aboutDialog->setDescription("Keeps track of your events.");
-        m_aboutDialog->setIconSource("office-calendar");
-        m_aboutDialog->setLink("https://github.com/cutefishos/calendar");
-        m_aboutDialog->onClosed = [this] { deleteLater(m_aboutDialog); };
+    if (m_aboutDialog) {
+        m_aboutDialog->show();
+        return;
     }
+
+    m_aboutDialog = std::make_unique<AboutDialog>(m_window.get());
+    m_aboutDialog->setName("Calendar");
+    m_aboutDialog->setDescription("Keeps track of your events.");
+    m_aboutDialog->setIconSource("office-calendar");
+    m_aboutDialog->setLink("https://github.com/cutefishos/calendar");
+    m_aboutDialog->onClosed = [this] { deleteLater(m_aboutDialog); };
     m_aboutDialog->show();
     m_aboutDialog->window()->addShortcut(NoModifier, key::Escape, [this] { m_aboutDialog->close(); });
 }
