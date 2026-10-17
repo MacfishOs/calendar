@@ -218,6 +218,22 @@ TEST(EventFileTest, ExclusionsAndMovedInstance)
     }));
 }
 
+TEST(EventFileTest, InstanceChangedByItsDate)
+{
+    const auto file = EventFile::fromData(calendarText(
+            "BEGIN:VEVENT\nUID:dated\nDTSTART:20261005T090000\nDURATION:PT1H\nRRULE:FREQ=DAILY;COUNT=3\n"
+            "SUMMARY:Walk\nEND:VEVENT\n"
+            "BEGIN:VEVENT\nUID:dated\nRECURRENCE-ID;VALUE=DATE:20261006\nDTSTART:20261006T170000\n"
+            "DURATION:PT1H\nSUMMARY:Walk (evening)\nEND:VEVENT\n"));
+    ASSERT_TRUE(file);
+
+    const std::vector<Occurrence> all = expand(*file, Date(2026, 10, 1), Date(2026, 11, 1));
+    ASSERT_EQ(all.size(), 3u);
+    EXPECT_EQ(all[1].start, DateTime(Date(2026, 10, 6), Time(17, 0)));
+    EXPECT_EQ(all[1].summary, "Walk (evening)");
+    EXPECT_EQ(file->data(all[1].recurrenceKey).summary, "Walk (evening)");
+}
+
 TEST(EventFileTest, CancelledInstance)
 {
     const auto file = EventFile::fromData(calendarText(

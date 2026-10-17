@@ -961,7 +961,9 @@ void EventFile::expand(Date from, Date to, std::vector<Occurrence>* out) const
 
     instances(event, series, skipTo, rangeEnd, [&](const IcalTime& time) {
         const std::string key = keyOf(time);
-        if (overrides.contains(key) || excluded(excludedKeys, time))
+        // A date names the timed instance on that day, as it does in EXDATE.
+        if (overrides.contains(key) || (!time.isDate() && overrides.contains(dateKey(dateOf(time.wall))))
+                || excluded(excludedKeys, time))
             return true;
         Occurrence occurrence = makeOccurrence(event, series, time);
         occurrence.recurrenceKey = key;
