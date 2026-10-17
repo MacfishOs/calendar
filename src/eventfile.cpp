@@ -661,13 +661,26 @@ static std::vector<DateTime> alarmTimes(icalcomponent* event, const Occurrence& 
         if (!property)
             continue;
         const icaltriggertype trigger = icalproperty_get_trigger(property);
-        if (!icaltime_is_null_time(trigger.time)) {
-            times.push_back(toDateTime(makeTime(trigger.time, property, event)).toLocalTime());
+        if (!icaltime_is_null_time(trigger.time))
             continue;
-        }
         icalparameter* related = icalproperty_get_first_parameter(property, ICAL_RELATED_PARAMETER);
         const bool fromEnd = related && icalparameter_get_related(related) == ICAL_RELATED_END;
         times.push_back((fromEnd ? end : start).addSecs(icaldurationtype_as_int(trigger.duration)));
+    }
+    return times;
+}
+
+// The alarms of the event that go off at a time of their own.
+static std::vector<DateTime> fixedAlarmTimes(icalcomponent* event)
+{
+    std::vector<DateTime> times;
+    for (icalcomponent* alarm : components(event, ICAL_VALARM_COMPONENT)) {
+        icalproperty* property = icalcomponent_get_first_property(alarm, ICAL_TRIGGER_PROPERTY);
+        if (!property)
+            continue;
+        const icaltriggertype trigger = icalproperty_get_trigger(property);
+        if (!icaltime_is_null_time(trigger.time))
+            times.push_back(toDateTime(makeTime(trigger.time, property, event)).toLocalTime());
     }
     return times;
 }
@@ -1014,6 +1027,42 @@ std::vector<std::pair<DateTime, Occurrence>> EventFile::alarms(const DateTime& f
         for (const DateTime& time : alarmTimes(event, occurrence)) {
             if (time >= from && time < to)
                 result.emplace_back(time, occurrence);
+        }
+    }
+
+    // A trigger at a set time goes off once, however far from the event and
+    // however many occurrences surround it: for a repeating event, with the
+    // first occurrence from then on.
+    std::unordered_set<int64_t> fixed;
+    for (icalcomponent* event : events) {
+        for (const DateTime& time : fixedAlarmTimes(event)) {
+            if (time < from || time >= to || !fixed.insert(time.toSecsSinceEpoch()).second)
+                continue;
+            Occurrence occurrence;
+            if (!isRecurring()) {
+                std::vector<Occurrence> own;
+                expand(Date(1, 1, 1), Date(9999, 12, 31), &own);
+                if (own.empty())
+                    continue;
+                occurrence = own.front();
+            } else if (isOverride(event)) {
+                const Series moved = seriesOf(event);
+                if (moved.start.isNull())
+                    continue;
+                const std::string key = keyOf(propertyTime(event, ICAL_RECURRENCEID_PROPERTY));
+                const Occurrence own = makeOccurrence(event, moved, moved.start);
+                std::vector<Occurrence> around;
+                expand(own.firstDay, own.lastDay.addDays(1), &around);
+                const auto found = std::find_if(around.begin(), around.end(), [&key](const Occurrence& item) {
+                    return item.recurrenceKey == key;
+                });
+                if (found == around.end())
+                    continue;
+                occurrence = *found;
+            } else if (!nextOccurrence(time, 366, &occurrence)) {
+                continue;
+            }
+            result.emplace_back(time, occurrence);
         }
     }
     return result;

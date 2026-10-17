@@ -497,6 +497,31 @@ TEST(EventFileTest, Alarms)
     EXPECT_EQ(evening.front().first, DateTime(Date(2026, 10, 9), Time(9, 0)));
 }
 
+// An alarm at a set time goes off then, days before the event too, and only
+// once for a repeating event.
+TEST(EventFileTest, AlarmsAtASetTime)
+{
+    const auto single = EventFile::fromData(calendarText(
+        "BEGIN:VEVENT\nUID:fixed-single\nDTSTART:20261020T100000Z\nDTEND:20261020T110000Z\nSUMMARY:Exam\n"
+        "BEGIN:VALARM\nACTION:DISPLAY\nTRIGGER;VALUE=DATE-TIME:20261015T090000Z\nEND:VALARM\nEND:VEVENT\n"));
+    ASSERT_TRUE(single);
+    const DateTime trigger = DateTime(Date(2026, 10, 15), Time(9, 0), TimeZone::utc());
+    const auto due = single->alarms(trigger.addSecs(-3600), trigger.addSecs(3600));
+    ASSERT_EQ(due.size(), 1u);
+    EXPECT_EQ(due.front().first, trigger);
+    EXPECT_EQ(due.front().second.start, DateTime(Date(2026, 10, 20), Time(10, 0), TimeZone::utc()));
+
+    const auto daily = EventFile::fromData(calendarText(
+        "BEGIN:VEVENT\nUID:fixed-daily\nDTSTART:20261010T100000Z\nDTEND:20261010T110000Z\nRRULE:FREQ=DAILY\n"
+        "SUMMARY:Standup\nBEGIN:VALARM\nACTION:DISPLAY\nTRIGGER;VALUE=DATE-TIME:20261015T090000Z\nEND:VALARM\n"
+        "END:VEVENT\n"));
+    ASSERT_TRUE(daily);
+    const auto once = daily->alarms(trigger.addDays(-2), trigger.addDays(2));
+    ASSERT_EQ(once.size(), 1u);
+    EXPECT_EQ(once.front().first, trigger);
+    EXPECT_EQ(once.front().second.start, DateTime(Date(2026, 10, 15), Time(10, 0), TimeZone::utc()));
+}
+
 TEST(EventFileTest, ImportSplitsByUid)
 {
     const auto files = EventFile::split(calendarText(
