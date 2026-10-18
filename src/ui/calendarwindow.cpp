@@ -224,7 +224,8 @@ void CalendarWindow::sizeChanged()
         return;
     m_wasNarrow = isNarrow;
     m_sidebarOverlay = false;
-    updateSidebarState(true);
+    // Only a drag resize slides the sidebar; the size at startup or from the compositor just sets it.
+    updateSidebarState(m_window->isInteractivelyResized());
 }
 
 void CalendarWindow::updateSidebarState(bool animate)
@@ -232,6 +233,10 @@ void CalendarWindow::updateSidebarState(bool animate)
     const double reveal = sidebarDocked() || m_sidebarOverlay ? 1 : 0;
     const double dock = sidebarDocked() ? 1 : 0;
     if (!animate) {
+        m_revealAnimation->stop();
+        m_dockAnimation->stop();
+        m_revealTo = reveal;
+        m_dockTo = dock;
         m_sidebarReveal = reveal;
         m_dockReveal = dock;
     } else {
