@@ -4,6 +4,7 @@
 #pragma once
 
 #include "calendarmodel.h"
+#include "holidayfeeds.h"
 
 #include <ui/view.h>
 
@@ -102,6 +103,41 @@ private:
     cutefish::ui::TextField* m_name;
     cutefish::ui::DialogButton* m_save;
     std::vector<cutefish::ui::View*> m_swatches;
+};
+
+// Asks for the address of a calendar published on the web and subscribes to
+// it, staying open with the reason when that fails.
+class SubscriptionDialog : public SmallDialog
+{
+public:
+    SubscriptionDialog(cutefish::ui::Window* parent, CalendarModel* model);
+    ~SubscriptionDialog() override;
+
+    bool isBusy() const { return m_pending >= 0; }
+    bool holidaysShown() const;
+    void setHolidaysShown(bool shown);
+
+    std::function<void(const std::string& id)> onSubscribed;
+
+private:
+    class HolidayRow;
+    class HolidayToggle;
+
+    void accept();
+    void update();
+    void updateSwatches();
+
+    CalendarModel* m_model;
+    Rgb m_color;
+    cutefish::ui::TextField* m_url;
+    cutefish::ui::Label* m_error;
+    HolidayToggle* m_holidayToggle;
+    cutefish::ui::View* m_holidayList;
+    std::vector<HolidayFeed> m_feeds;
+    std::vector<HolidayRow*> m_holidayRows;
+    cutefish::ui::DialogButton* m_subscribe;
+    std::vector<cutefish::ui::View*> m_swatches;
+    int m_pending = -1;
 };
 
 class ImportDialog : public SmallDialog

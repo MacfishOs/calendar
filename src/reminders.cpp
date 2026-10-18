@@ -16,7 +16,8 @@ std::vector<Reminder> Reminders::due(const CalendarStore& store, const DateTime&
     std::vector<Reminder> reminders;
     for (const std::string& key : store.keys()) {
         const EventFile* file = store.event(key);
-        if (!file)
+        // A subscribed calendar's alerts are the publisher's, not the user's.
+        if (!file || store.isReadOnly(CalendarStore::calendarOf(key)))
             continue;
         for (const auto& [time, occurrence] : file->alarms(from, to)) {
             Reminder reminder{time, occurrence};

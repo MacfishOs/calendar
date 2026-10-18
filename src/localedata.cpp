@@ -6,6 +6,7 @@
 #include <base/locale.h>
 
 #include <algorithm>
+#include <cctype>
 #include <regex>
 
 using cutefish::base::CalendarDate;
@@ -33,6 +34,20 @@ static CalendarDate calendarDate(Date date)
 std::string LocaleData::language()
 {
     return Locale::system().language();
+}
+
+std::string LocaleData::region()
+{
+    // "en_SG"; a script or other part may come between ("zh_Hans_CN").
+    const std::string name = Locale::system().name();
+    const size_t separator = name.find_last_of('_');
+    if (separator == std::string::npos)
+        return {};
+    const std::string code = name.substr(separator + 1);
+    const bool letters = code.size() == 2 && std::all_of(code.begin(), code.end(), [](unsigned char c) {
+        return std::isupper(c);
+    });
+    return letters ? code : std::string();
 }
 
 bool LocaleData::isCjk()

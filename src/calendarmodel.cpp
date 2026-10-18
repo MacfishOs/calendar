@@ -122,6 +122,7 @@ static std::string localPath(const std::string& file)
 
 CalendarModel::CalendarModel(CalendarStore* store, std::string settingsPath)
     : m_store(store)
+    , m_subscriptions(store)
     , m_settings(settingsPath.empty() ? cutefish::base::paths::cutefishConfig("calendar") : std::move(settingsPath))
     , m_today(Date::currentDate())
 {
@@ -154,7 +155,7 @@ CalendarModel::CalendarModel(CalendarStore* store, std::string settingsPath)
 
 void CalendarModel::ensureCalendar()
 {
-    if (m_store->calendars().empty())
+    if (writableCalendars().empty())
         m_store->createCalendar("Personal", Rgb{0x33, 0x85, 0xff});
 }
 
@@ -162,16 +163,24 @@ std::vector<CalendarItem> CalendarModel::calendars() const
 {
     std::vector<CalendarItem> list;
     for (const CalendarInfo& calendar : m_store->calendars())
-        list.push_back({calendar.id, calendar.name, calendar.color, !m_hidden.contains(calendar.id)});
+        list.push_back({calendar.id, calendar.name, calendar.color, !m_hidden.contains(calendar.id),
+                        calendar.isReadOnly()});
+    return list;
+}
+
+std::vector<CalendarItem> CalendarModel::writableCalendars() const
+{
+    std::vector<CalendarItem> list = calendars();
+    std::erase_if(list, [](const CalendarItem& calendar) { return calendar.readOnly; });
     return list;
 }
 
 std::string CalendarModel::defaultCalendar() const
 {
     const std::string id = m_settings.stringValue("defaultCalendar");
-    if (m_store->hasCalendar(id))
+    if (m_store->hasCalendar(id) && !m_store->isReadOnly(id))
         return id;
-    const std::vector<CalendarInfo> calendars = m_store->calendars();
+    const std::vector<CalendarItem> calendars = writableCalendars();
     return calendars.empty() ? std::string() : calendars.front().id;
 }
 
@@ -249,6 +258,7 @@ EventItem CalendarModel::itemFor(const Occurrence& occurrence) const
     item.location = occurrence.location;
     item.allDay = occurrence.allDay;
     item.recurring = occurrence.recurring;
+    item.readOnly = m_store->isReadOnly(occurrence.calendarId);
     item.color = m_store->calendar(occurrence.calendarId).color;
     item.calendarId = occurrence.calendarId;
     item.firstDay = occurrence.firstDay;
@@ -406,6 +416,7 @@ std::optional<EventForm> CalendarModel::eventData(const std::string& key, const 
     form.calendarId = CalendarStore::calendarOf(key);
     form.recurring = file->isRecurring();
     form.firstOccurrence = recurrenceKey.empty() || file->isFirstOccurrence(recurrenceKey);
+    form.readOnly = m_store->isReadOnly(form.calendarId);
     return form;
 }
 
@@ -435,8 +446,10 @@ bool CalendarModel::saveEvent(const EventForm& form, int scope)
 {
     const std::string& key = form.key;
     const std::string& recurrenceKey = form.recurrenceKey;
+    if (!key.empty() && m_store->isReadOnly(CalendarStore::calendarOf(key)))
+        return false;
     std::string calendarId = form.calendarId;
-    if (!m_store->hasCalendar(calendarId))
+    if (!m_store->hasCalendar(calendarId) || m_store->isReadOnly(calendarId))
         calendarId = defaultCalendar();
     const EventData data = eventDataFrom(form);
 
@@ -489,7 +502,7 @@ bool CalendarModel::saveEvent(const EventForm& form, int scope)
 bool CalendarModel::removeEvent(const std::string& key, const std::string& recurrenceKey, int scope)
 {
     const EventFile* file = m_store->event(key);
-    if (!file)
+    if (!file || m_store->isReadOnly(CalendarStore::calendarOf(key)))
         return false;
     std::shared_ptr<EventFile> before = file->clone();
 
@@ -518,7 +531,7 @@ bool CalendarModel::moveOccurrence(const std::string& key, const std::string& re
                                    int startMinutes, int endDays, int endMinutes, int scope)
 {
     const EventFile* file = m_store->event(key);
-    if (!file)
+    if (!file || m_store->isReadOnly(CalendarStore::calendarOf(key)))
         return false;
     EventData data = file->data(recurrenceKey);
     if (data.allDay) {
@@ -592,13 +605,23 @@ void CalendarModel::saveHidden()
     m_settings.sync();
 }
 
+bool CalendarModel::canRemoveCalendar(const std::string& id) const
+{
+    if (!m_store->hasCalendar(id))
+        return false;
+    return m_store->isReadOnly(id) || writableCalendars().size() > 1;
+}
+
 bool CalendarModel::removeCalendar(const std::string& id)
 {
-    if (m_store->calendars().size() <= 1 || !m_store->removeCalendar(id))
+    const bool readOnly = m_store->isReadOnly(id);
+    if (!canRemoveCalendar(id) || !m_store->removeCalendar(id))
         return false;
-    // Undo would bring back events of a calendar that is gone.
-    m_undo.clear();
-    undoChanged.emit();
+    // Undo would bring back events of a calendar that is gone; a subscription's were never edited.
+    if (!readOnly) {
+        m_undo.clear();
+        undoChanged.emit();
+    }
     if (m_hidden.erase(id))
         saveHidden();
     defaultCalendarChanged.emit();

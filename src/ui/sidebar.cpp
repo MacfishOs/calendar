@@ -198,24 +198,26 @@ Sidebar::Sidebar(CalendarWindow* window)
     m_miniMonth->onDayClicked = [window](Date date) { window->setCurrentDate(date); };
     m_miniMonth->onDayDoubleClicked = [window](Date date) { window->showDay(date); };
 
-    RowLayout* heading = content->addChild<RowLayout>();
-    heading->setSpacing(0);
-    heading->setLayoutHints({.fillWidth = true});
-    Label* calendars = heading->addChild<Label>("Calendars");
-    calendars->setName("calendarsHeading");
-    m_heading = calendars;
-    calendars->setFontSize(Style::points(9));
-    calendars->setWeight(500);
-    calendars->setLayoutHints({.fillWidth = true, .margins = {4, 0, 0, 0}});
-    RoundImageButton* add = heading->addChild<RoundImageButton>("calendar-add", 24);
-    add->setIconSize(16);
-    add->setName("addCalendar");
-    add->onClicked = [window] { window->newCalendar(); };
+    RowLayout* heading = addHeading("Calendars", "addCalendar");
+    heading->children()[0]->setName("calendarsHeading");
+    static_cast<RoundImageButton*>(heading->children()[1].get())->onClicked = [window] { window->newCalendar(); };
 
     m_calendarList = content->addChild<Card>(6, 6, 6);
     m_calendarList->setName("calendarList");
     m_calendarList->setLayoutHints({.fillWidth = true});
     m_calendarList->addChild<Column>();
+
+    // Shown once there is a subscription; the main menu adds the first.
+    m_subscriptionHeading = addHeading("Subscriptions", "addSubscription");
+    m_subscriptionHeading->children()[0]->setName("subscriptionsHeading");
+    static_cast<RoundImageButton*>(m_subscriptionHeading->children()[1].get())->onClicked = [window] {
+        window->newSubscription();
+    };
+
+    m_subscriptionList = content->addChild<Card>(6, 6, 6);
+    m_subscriptionList->setName("subscriptionList");
+    m_subscriptionList->setLayoutHints({.fillWidth = true});
+    m_subscriptionList->addChild<Column>();
 
     CalendarModel* model = window->model();
     m_subscriptions.push_back(model->revisionChanged.connect([this] {
@@ -247,9 +249,26 @@ Sidebar::Sidebar(CalendarWindow* window)
 
 Sidebar::~Sidebar() = default;
 
+RowLayout* Sidebar::addHeading(const std::string& text, const std::string& buttonName)
+{
+    RowLayout* heading = contentView()->addChild<RowLayout>();
+    heading->setSpacing(0);
+    heading->setLayoutHints({.fillWidth = true});
+    Label* label = heading->addChild<Label>(text);
+    label->setFontSize(Style::points(9));
+    label->setWeight(500);
+    label->setLayoutHints({.fillWidth = true, .margins = {4, 0, 0, 0}});
+    m_headings.push_back(label);
+    RoundImageButton* add = heading->addChild<RoundImageButton>("calendar-add", 24);
+    add->setIconSize(16);
+    add->setName(buttonName);
+    return heading;
+}
+
 void Sidebar::layout()
 {
-    m_heading->setColor(Theme::current().disabledText);
+    for (Label* heading : m_headings)
+        heading->setColor(Theme::current().disabledText);
     ScrollView::layout();
 }
 
@@ -267,14 +286,19 @@ void Sidebar::updateMonth()
 
 void Sidebar::updateCalendars()
 {
-    auto* column = static_cast<Column*>(m_calendarList->content());
+    auto* calendars = static_cast<Column*>(m_calendarList->content());
+    auto* subscriptions = static_cast<Column*>(m_subscriptionList->content());
     for (CalendarRow* row : m_rows)
-        column->takeChild(row);
+        static_cast<Column*>(row->parent())->takeChild(row);
     m_rows.clear();
+    bool subscribed = false;
     for (const CalendarItem& calendar : m_window->model()->calendars()) {
-        CalendarRow* row = column->addChild<CalendarRow>(m_window, calendar);
+        subscribed = subscribed || calendar.readOnly;
+        CalendarRow* row = (calendar.readOnly ? subscriptions : calendars)->addChild<CalendarRow>(m_window, calendar);
         row->setLayoutHints({.fillWidth = true});
         m_rows.push_back(row);
     }
+    m_subscriptionHeading->setVisible(subscribed);
+    m_subscriptionList->setVisible(subscribed);
     requestLayout();
 }

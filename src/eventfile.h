@@ -47,6 +47,14 @@ struct EventData
     int alarmOffset = 0;
 };
 
+// What a published calendar says about itself.
+struct FeedInfo
+{
+    std::string name;
+    // How often it asks to be fetched again; 0 when it does not say.
+    int64_t refreshSeconds = 0;
+};
+
 // One event and the instances of it that were changed on their own. Fields the
 // editor does not show, from imported or synced files, are kept.
 class EventFile
@@ -59,6 +67,7 @@ public:
     static std::unique_ptr<EventFile> fromData(std::string_view data);
     // One file per event in a calendar of many, as an import needs them.
     static std::vector<std::unique_ptr<EventFile>> split(std::string_view data);
+    static FeedInfo feedInfo(std::string_view data);
     static std::unique_ptr<EventFile> create(const EventData& data);
 
     std::unique_ptr<EventFile> clone() const;

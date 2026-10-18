@@ -9,6 +9,7 @@
 
 #include <base/file.h>
 #include <base/paths.h>
+#include <base/settings.h>
 
 #include <algorithm>
 #include <regex>
@@ -17,6 +18,33 @@ namespace fs = std::filesystem;
 namespace base = cutefish::base;
 
 static const Rgb DefaultColor{0x3c, 0x81, 0xf6};
+static const char SubscriptionFile[] = "/subscription";
+
+static FeedState readFeedState(const std::string& directory)
+{
+    FeedState state;
+    std::error_code error;
+    if (!fs::is_regular_file(directory + SubscriptionFile, error))
+        return state;
+    const base::Settings settings(directory + SubscriptionFile);
+    state.url = settings.stringValue("url");
+    state.etag = settings.stringValue("etag");
+    state.lastModified = settings.stringValue("lastModified");
+    state.fetched = settings.intValue("fetched");
+    state.refreshSeconds = settings.intValue("refreshSeconds");
+    return state;
+}
+
+static bool writeFeedState(const std::string& directory, const FeedState& state)
+{
+    base::Settings settings(directory + SubscriptionFile);
+    settings.setValue("url", state.url);
+    settings.setValue("etag", state.etag);
+    settings.setValue("lastModified", state.lastModified);
+    settings.setValue("fetched", state.fetched);
+    settings.setValue("refreshSeconds", state.refreshSeconds);
+    return settings.sync();
+}
 
 static std::string readSmallFile(const std::string& path)
 {
@@ -79,6 +107,7 @@ CalendarStore::Snapshot CalendarStore::scan(const std::string& root, const std::
         if (info.name.empty())
             info.name = id;
         info.color = Rgb::fromName(std::string_view(readSmallFile(path + "/color")).substr(0, 7)).value_or(DefaultColor);
+        info.url = readFeedState(path).url;
         snapshot.calendars.emplace(id, info);
 
         for (const fs::directory_entry& file : fs::directory_iterator(path, error)) {
@@ -195,26 +224,57 @@ std::string CalendarStore::createCalendar(const std::string& name, Rgb color)
     return id;
 }
 
+std::string CalendarStore::createSubscription(const std::string& name, Rgb color, const FeedState& state)
+{
+    if (state.url.empty())
+        return {};
+    const std::string id = createUuid();
+    const std::string path = m_root + '/' + id;
+    std::error_code error;
+    fs::create_directories(path, error);
+    if (error)
+        return {};
+    // The feed first: a rescan in between never sees it as one of the user's own.
+    if (!writeFeedState(path, state)) {
+        fs::remove_all(path, error);
+        return {};
+    }
+    writeSmallFile(path + "/displayname", name);
+    writeSmallFile(path + "/color", color.name());
+    m_calendars[id] = CalendarInfo{id, name, color, state.url};
+    watch();
+    emitChanged();
+    return id;
+}
+
 bool CalendarStore::updateCalendar(const std::string& id, const std::string& name, Rgb color)
 {
-    if (!m_calendars.contains(id))
+    const auto it = m_calendars.find(id);
+    if (it == m_calendars.end())
         return false;
     const std::string path = m_root + '/' + id;
     if (!writeSmallFile(path + "/displayname", name) || !writeSmallFile(path + "/color", color.name()))
         return false;
-    m_calendars[id] = CalendarInfo{id, name, color};
+    it->second.name = name;
+    it->second.color = color;
     emitChanged();
     return true;
 }
 
 bool CalendarStore::removeCalendar(const std::string& id)
 {
-    if (!m_calendars.contains(id))
+    const auto it = m_calendars.find(id);
+    if (it == m_calendars.end())
         return false;
     const std::string path = m_root + '/' + id;
     std::error_code error;
-    if (!moveToTrash(path) && (fs::remove_all(path, error), error))
+    // A subscribed calendar's events come back from its feed.
+    if (it->second.isReadOnly()) {
+        if (fs::remove_all(path, error), error)
+            return false;
+    } else if (!moveToTrash(path) && (fs::remove_all(path, error), error)) {
         return false;
+    }
     m_calendars.erase(id);
     std::erase_if(m_events, [&id](const auto& item) {
         return calendarOf(item.first) == id;
@@ -222,6 +282,66 @@ bool CalendarStore::removeCalendar(const std::string& id)
     watch();
     emitChanged();
     return true;
+}
+
+bool CalendarStore::isReadOnly(const std::string& id) const
+{
+    const auto it = m_calendars.find(id);
+    return it != m_calendars.end() && it->second.isReadOnly();
+}
+
+FeedState CalendarStore::feedState(const std::string& id) const
+{
+    if (!isReadOnly(id))
+        return {};
+    return readFeedState(m_root + '/' + id);
+}
+
+bool CalendarStore::setFeedState(const std::string& id, const FeedState& state)
+{
+    if (!isReadOnly(id) || state.url.empty())
+        return false;
+    if (!writeFeedState(m_root + '/' + id, state))
+        return false;
+    m_calendars[id].url = state.url;
+    return true;
+}
+
+int CalendarStore::replaceEvents(const std::string& calendarId, std::vector<std::unique_ptr<EventFile>> files)
+{
+    if (!m_calendars.contains(calendarId))
+        return -1;
+
+    std::unordered_map<std::string, std::string> byUid;
+    for (const auto& [key, entry] : m_events) {
+        if (calendarOf(key) == calendarId)
+            byUid[entry.file->uid()] = key;
+    }
+
+    int count = 0;
+    std::unordered_set<std::string> kept;
+    m_batching = true;
+    for (std::unique_ptr<EventFile>& file : files) {
+        const auto existing = byUid.find(file->uid());
+        if (existing == byUid.end()) {
+            if (!insertEvent(calendarId, std::move(file)).empty())
+                ++count;
+            continue;
+        }
+        kept.insert(existing->second);
+        if (m_events[existing->second].file->toData() == file->toData())
+            continue;
+        if (!rewriteEvent(existing->second, std::move(file)).empty())
+            ++count;
+    }
+    for (const auto& [uid, key] : byUid) {
+        if (!kept.contains(key) && eraseEvent(key))
+            ++count;
+    }
+    m_batching = false;
+    if (count > 0)
+        emitChanged();
+    return count;
 }
 
 int CalendarStore::eventCount(const std::string& calendarId) const
@@ -306,7 +426,7 @@ void CalendarStore::stamp(const std::string& key, Entry* entry) const
     entry->size = fs::file_size(pathOf(key), error);
 }
 
-std::string CalendarStore::addEvent(const std::string& calendarId, std::unique_ptr<EventFile> file)
+std::string CalendarStore::insertEvent(const std::string& calendarId, std::unique_ptr<EventFile> file)
 {
     if (!m_calendars.contains(calendarId) || !file)
         return {};
@@ -320,7 +440,7 @@ std::string CalendarStore::addEvent(const std::string& calendarId, std::unique_p
     return key;
 }
 
-std::string CalendarStore::updateEvent(const std::string& key, std::unique_ptr<EventFile> file)
+std::string CalendarStore::rewriteEvent(const std::string& key, std::unique_ptr<EventFile> file)
 {
     if (!m_events.contains(key) || !file || !write(key, *file))
         return {};
@@ -331,10 +451,36 @@ std::string CalendarStore::updateEvent(const std::string& key, std::unique_ptr<E
     return key;
 }
 
+bool CalendarStore::eraseEvent(const std::string& key)
+{
+    if (!m_events.contains(key))
+        return false;
+    std::error_code error;
+    if (!fs::remove(pathOf(key), error) && fs::exists(pathOf(key), error))
+        return false;
+    m_events.erase(key);
+    emitChanged();
+    return true;
+}
+
+std::string CalendarStore::addEvent(const std::string& calendarId, std::unique_ptr<EventFile> file)
+{
+    if (isReadOnly(calendarId))
+        return {};
+    return insertEvent(calendarId, std::move(file));
+}
+
+std::string CalendarStore::updateEvent(const std::string& key, std::unique_ptr<EventFile> file)
+{
+    if (isReadOnly(calendarOf(key)))
+        return {};
+    return rewriteEvent(key, std::move(file));
+}
+
 std::string CalendarStore::moveEvent(const std::string& key, const std::string& calendarId)
 {
     const EventFile* file = event(key);
-    if (!file || !m_calendars.contains(calendarId))
+    if (!file || !m_calendars.contains(calendarId) || isReadOnly(calendarOf(key)) || isReadOnly(calendarId))
         return {};
     if (calendarOf(key) == calendarId)
         return key;
@@ -347,19 +493,14 @@ std::string CalendarStore::moveEvent(const std::string& key, const std::string& 
 
 bool CalendarStore::removeEvent(const std::string& key)
 {
-    if (!m_events.contains(key))
+    if (isReadOnly(calendarOf(key)))
         return false;
-    std::error_code error;
-    if (!fs::remove(pathOf(key), error) && fs::exists(pathOf(key), error))
-        return false;
-    m_events.erase(key);
-    emitChanged();
-    return true;
+    return eraseEvent(key);
 }
 
 int CalendarStore::importData(const std::string& calendarId, std::string_view data)
 {
-    if (!m_calendars.contains(calendarId))
+    if (!m_calendars.contains(calendarId) || isReadOnly(calendarId))
         return -1;
     std::vector<std::unique_ptr<EventFile>> files = EventFile::split(data);
     if (files.empty())

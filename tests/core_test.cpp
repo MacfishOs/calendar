@@ -5,7 +5,9 @@
 #include "calendarstore.h"
 #include "eventfile.h"
 #include "eventlayout.h"
+#include "holidayfeeds.h"
 #include "reminders.h"
+#include "text.h"
 
 #include <base/event_loop.h>
 #include <base/file.h>
@@ -905,4 +907,337 @@ TEST(ModelTest, SettingsKeepTheirFormat)
     EXPECT_TRUE(contains(written, "showWeekNumbers=true")) << written;
     EXPECT_TRUE(contains(written, "[Calendars]\nhidden=work")) << written;
     EXPECT_TRUE(contains(written, "Main=@Size(931 625)")) << written;
+}
+
+static const char HolidayEvents[] =
+    "BEGIN:VEVENT\nUID:new-year\nDTSTART;VALUE=DATE:20270101\nDTEND;VALUE=DATE:20270102\nSUMMARY:New Year\n"
+    "BEGIN:VALARM\nACTION:DISPLAY\nTRIGGER:-PT1H\nEND:VALARM\nEND:VEVENT\n"
+    "BEGIN:VEVENT\nUID:national-day\nDTSTART;VALUE=DATE:20261001\nDTEND;VALUE=DATE:20261008\n"
+    "SUMMARY:National Day\nEND:VEVENT\n";
+
+static std::string holidayCalendar(const std::string& events = HolidayEvents)
+{
+    return calendarText("X-WR-CALNAME:Holidays\nX-PUBLISHED-TTL:PT12H\n" + events);
+}
+
+TEST(SubscriptionTest, AddressesAreNormalized)
+{
+    EXPECT_EQ(Subscriptions::normalizedUrl(" webcal://example.com/h.ics "), "https://example.com/h.ics");
+    EXPECT_EQ(Subscriptions::normalizedUrl("WEBCALS://example.com/h.ics"), "https://example.com/h.ics");
+    EXPECT_EQ(Subscriptions::normalizedUrl("http://example.com/h.ics"), "http://example.com/h.ics");
+    EXPECT_EQ(Subscriptions::normalizedUrl("example.com/h.ics"), "https://example.com/h.ics");
+    EXPECT_EQ(Subscriptions::normalizedUrl("ftp://example.com/h.ics"), "");
+    EXPECT_EQ(Subscriptions::normalizedUrl("file:///tmp/h.ics"), "");
+    EXPECT_EQ(Subscriptions::normalizedUrl("https://"), "");
+    EXPECT_EQ(Subscriptions::normalizedUrl("https://example.com/a b.ics"), "");
+    EXPECT_EQ(Subscriptions::normalizedUrl(""), "");
+}
+
+TEST(SubscriptionTest, FeedNamesItselfAndItsRefresh)
+{
+    const FeedInfo info = EventFile::feedInfo(holidayCalendar());
+    EXPECT_EQ(info.name, "Holidays");
+    EXPECT_EQ(info.refreshSeconds, 12 * 60 * 60);
+
+    // RFC 7986 properties win over the older extensions.
+    const FeedInfo modern = EventFile::feedInfo(calendarText(
+        "NAME:Public Holidays\nX-WR-CALNAME:Old\nREFRESH-INTERVAL;VALUE=DURATION:P1W\nX-PUBLISHED-TTL:PT1H\n"));
+    EXPECT_EQ(modern.name, "Public Holidays");
+    EXPECT_EQ(modern.refreshSeconds, 7 * 24 * 60 * 60);
+
+    EXPECT_EQ(EventFile::feedInfo(calendarText("")).refreshSeconds, 0);
+    EXPECT_EQ(Subscriptions::refreshInterval({}), Subscriptions::DefaultRefreshSeconds);
+    EXPECT_EQ(Subscriptions::refreshInterval({.refreshSeconds = 60}), Subscriptions::ShortestRefreshSeconds);
+    EXPECT_EQ(Subscriptions::refreshInterval({.refreshSeconds = 365 * 24 * 60 * 60}),
+              Subscriptions::LongestRefreshSeconds);
+}
+
+TEST(SubscriptionTest, SubscribedCalendarIsReadOnly)
+{
+    base::EventLoop loop;
+    TemporaryDirectory dir;
+    CalendarStore store(dir.filePath("calendars"));
+    CalendarModel app(&store, dir.filePath("calendar.conf"));
+    store.load();
+    const std::string own = app.defaultCalendar();
+    ASSERT_FALSE(own.empty());
+
+    const std::string id = store.createSubscription("Holidays", Rgb{0xff, 0, 0}, {.url = "https://example.com/h.ics"});
+    ASSERT_FALSE(id.empty());
+    EXPECT_EQ(store.replaceEvents(id, EventFile::split(holidayCalendar())), 2);
+    EXPECT_TRUE(store.isReadOnly(id));
+    EXPECT_FALSE(store.isReadOnly(own));
+
+    // Read back from disk as a subscription.
+    CalendarStore other(dir.filePath("calendars"));
+    other.load();
+    EXPECT_TRUE(other.isReadOnly(id));
+    EXPECT_EQ(other.calendar(id).url, "https://example.com/h.ics");
+    EXPECT_EQ(other.eventCount(id), 2);
+
+    const std::string key = store.keys().front().starts_with(id) ? store.keys().front() : store.keys().back();
+    ASSERT_TRUE(key.starts_with(id));
+    EXPECT_TRUE(store.addEvent(id, EventFile::create(timedEvent("Mine", DateTime(Date(2026, 10, 7), Time(9, 0)), 60)))
+                    .empty());
+    EXPECT_TRUE(store.updateEvent(key, store.event(key)->clone()).empty());
+    EXPECT_TRUE(store.moveEvent(key, own).empty());
+    EXPECT_FALSE(store.removeEvent(key));
+    EXPECT_EQ(store.importData(id, holidayCalendar()), -1);
+    EXPECT_EQ(store.eventCount(id), 2);
+
+    // The model shows its events as read-only and saves nothing into it.
+    const std::vector<CalendarItem> calendars = app.calendars();
+    EXPECT_EQ(std::count_if(calendars.begin(), calendars.end(), [](const CalendarItem& c) { return c.readOnly; }), 1);
+    EXPECT_EQ(app.writableCalendars().size(), 1u);
+    app.setDefaultCalendar(id);
+    EXPECT_EQ(app.defaultCalendar(), own);
+    const MonthLayout layout = app.monthLayout(Date(2026, 9, 28), 6, 3);
+    ASSERT_FALSE(layout.bars.empty());
+    EXPECT_TRUE(layout.bars.front().readOnly);
+    const std::optional<EventForm> form = app.eventData(key, {});
+    ASSERT_TRUE(form);
+    EXPECT_TRUE(form->readOnly);
+    EventForm changed = *form;
+    changed.title = "Changed";
+    EXPECT_FALSE(app.saveEvent(changed, EventFile::AllEvents));
+    EXPECT_FALSE(app.removeEvent(key, {}, EventFile::AllEvents));
+    EXPECT_FALSE(app.moveOccurrence(key, {}, 1, 0, 1, 0, EventFile::AllEvents));
+
+    // A new event aimed at it lands in a calendar of the user's.
+    EventForm added = app.newEventData(DateTime(Date(2026, 10, 7), Time(9, 0)), DateTime(Date(2026, 10, 7), Time(10, 0)),
+                                       false);
+    added.calendarId = id;
+    EXPECT_TRUE(app.saveEvent(added, EventFile::AllEvents));
+    EXPECT_EQ(store.eventCount(own), 1);
+    EXPECT_EQ(store.eventCount(id), 2);
+
+    // Its alerts are not the user's.
+    EXPECT_TRUE(Reminders::due(store, DateTime(Date(2026, 12, 31), Time(0, 0)),
+                               DateTime(Date(2027, 1, 2), Time(0, 0))).empty());
+
+    // The last own calendar stays; a subscription can always go, for good.
+    EXPECT_FALSE(app.canRemoveCalendar(own));
+    EXPECT_TRUE(app.canRemoveCalendar(id));
+    EXPECT_TRUE(app.removeCalendar(id));
+    EXPECT_FALSE(fs::exists(dir.filePath("calendars/" + id)));
+}
+
+TEST(SubscriptionTest, ReplacingRewritesOnlyWhatChanged)
+{
+    base::EventLoop loop;
+    TemporaryDirectory dir;
+    CalendarStore store(dir.path());
+    store.load();
+    const std::string id = store.createSubscription("Holidays", Rgb{0xff, 0, 0}, {.url = "https://example.com/h.ics"});
+    ASSERT_EQ(store.replaceEvents(id, EventFile::split(holidayCalendar())), 2);
+    std::string newYear;
+    for (const std::string& key : store.keys()) {
+        if (store.event(key)->uid() == "new-year")
+            newYear = key;
+    }
+    ASSERT_FALSE(newYear.empty());
+    const fs::file_time_type written = fs::last_write_time(dir.filePath(newYear));
+
+    int changes = 0;
+    const base::Subscription subscription = store.changed.connect([&changes] { ++changes; });
+    EXPECT_EQ(store.replaceEvents(id, EventFile::split(holidayCalendar())), 0);
+    EXPECT_EQ(changes, 0);
+
+    // One event changed, one gone, one new: one change signal for all.
+    const std::string next = calendarText(
+        "BEGIN:VEVENT\nUID:new-year\nDTSTART;VALUE=DATE:20270101\nSUMMARY:New Year's Day\nEND:VEVENT\n"
+        "BEGIN:VEVENT\nUID:labour-day\nDTSTART;VALUE=DATE:20270501\nSUMMARY:Labour Day\nEND:VEVENT\n");
+    EXPECT_EQ(store.replaceEvents(id, EventFile::split(next)), 3);
+    EXPECT_EQ(changes, 1);
+    EXPECT_EQ(store.eventCount(id), 2);
+    EXPECT_EQ(store.event(newYear)->summary(), "New Year's Day");
+    EXPECT_TRUE(fs::exists(dir.filePath(newYear)));
+    EXPECT_GE(fs::last_write_time(dir.filePath(newYear)), written);
+    EXPECT_EQ(store.occurrences(Date(2026, 10, 1), Date(2026, 10, 2)).size(), 0u);
+}
+
+namespace {
+
+// Serves feeds from memory in place of the network.
+struct FakeServer
+{
+    std::string body;
+    long status = 200;
+    std::string etag = "\"1\"";
+    int requests = 0;
+    std::string lastEtag;
+
+    Subscriptions::Fetch fetch()
+    {
+        return [this](const std::string&, const std::string& etag, const std::string&) {
+            ++requests;
+            lastEtag = etag;
+            Download answer;
+            if (status == 0) {
+                answer.error = "Could not resolve host";
+                return answer;
+            }
+            if (!etag.empty() && etag == this->etag) {
+                answer.status = 304;
+                return answer;
+            }
+            answer.status = status;
+            answer.body = body;
+            answer.etag = this->etag;
+            return answer;
+        };
+    }
+};
+
+}
+
+TEST(SubscriptionTest, SubscribesAndRefreshesWhenDue)
+{
+    base::EventLoop loop;
+    TemporaryDirectory dir;
+    CalendarStore store(dir.filePath("calendars"));
+    CalendarModel app(&store, dir.filePath("calendar.conf"));
+    FakeServer server;
+    server.body = holidayCalendar();
+    Subscriptions* subscriptions = app.subscriptions();
+    subscriptions->setFetch(server.fetch());
+    int64_t now = 1'800'000'000;
+    subscriptions->now = [&now] { return now; };
+    store.load();
+
+    std::string id;
+    std::string error = "pending";
+    subscriptions->subscribe("webcal://example.com/holidays.ics", Rgb{0xff, 0, 0},
+                             [&](const std::string& calendar, const std::string& message) {
+                                 id = calendar;
+                                 error = message;
+                             });
+    ASSERT_TRUE(runUntil(loop, [&] { return error != "pending"; }));
+    ASSERT_EQ(error, "");
+    EXPECT_EQ(store.calendar(id).name, "Holidays");
+    EXPECT_EQ(store.calendar(id).url, "https://example.com/holidays.ics");
+    EXPECT_EQ(store.eventCount(id), 2);
+    FeedState state = store.feedState(id);
+    EXPECT_EQ(state.etag, "\"1\"");
+    EXPECT_EQ(state.fetched, now);
+    EXPECT_EQ(state.refreshSeconds, 12 * 60 * 60);
+
+    // Not due yet.
+    now += 60 * 60;
+    subscriptions->refreshDue();
+    EXPECT_FALSE(subscriptions->isRefreshing(id));
+    EXPECT_EQ(server.requests, 1);
+
+    // Due, and not changed on the server.
+    now += 12 * 60 * 60;
+    subscriptions->refreshDue();
+    EXPECT_TRUE(subscriptions->isRefreshing(id));
+    ASSERT_TRUE(runUntil(loop, [&] { return !subscriptions->isRefreshing(id); }));
+    EXPECT_EQ(server.requests, 2);
+    EXPECT_EQ(server.lastEtag, "\"1\"");
+    EXPECT_EQ(store.feedState(id).fetched, now);
+    EXPECT_EQ(store.eventCount(id), 2);
+
+    // Changed on the server.
+    server.etag = "\"2\"";
+    server.body = holidayCalendar(
+        "BEGIN:VEVENT\nUID:new-year\nDTSTART;VALUE=DATE:20270101\nSUMMARY:New Year\nEND:VEVENT\n");
+    std::string refreshed = "pending";
+    subscriptions->refresh(id, [&](const std::string& message) { refreshed = message; });
+    ASSERT_TRUE(runUntil(loop, [&] { return refreshed != "pending"; }));
+    EXPECT_EQ(refreshed, "");
+    EXPECT_EQ(store.eventCount(id), 1);
+    EXPECT_EQ(store.feedState(id).etag, "\"2\"");
+
+    // A failure keeps the events and is retried later, not at every check.
+    server.status = 0;
+    server.etag = "\"3\"";
+    refreshed = "pending";
+    subscriptions->refresh(id, [&](const std::string& message) { refreshed = message; });
+    ASSERT_TRUE(runUntil(loop, [&] { return refreshed != "pending"; }));
+    EXPECT_EQ(refreshed, "The calendar could not be reached.");
+    EXPECT_EQ(store.eventCount(id), 1);
+    const int requests = server.requests;
+    now += 24 * 60 * 60;
+    subscriptions->refreshDue();
+    ASSERT_TRUE(runUntil(loop, [&] { return !subscriptions->isRefreshing(id); }));
+    EXPECT_EQ(server.requests, requests + 1);
+    subscriptions->refreshDue();
+    EXPECT_FALSE(subscriptions->isRefreshing(id));
+    EXPECT_EQ(server.requests, requests + 1);
+}
+
+TEST(SubscriptionTest, WhatIsNoCalendarIsNotSubscribed)
+{
+    base::EventLoop loop;
+    TemporaryDirectory dir;
+    CalendarStore store(dir.filePath("calendars"));
+    CalendarModel app(&store, dir.filePath("calendar.conf"));
+    FakeServer server;
+    app.subscriptions()->setFetch(server.fetch());
+    store.load();
+    const size_t calendars = store.calendars().size();
+
+    const auto subscribe = [&] {
+        std::string error = "pending";
+        app.subscriptions()->subscribe("https://example.com/page", Rgb{0xff, 0, 0},
+                                       [&](const std::string&, const std::string& message) { error = message; });
+        EXPECT_TRUE(runUntil(loop, [&] { return error != "pending"; }));
+        return error;
+    };
+    server.body = "<html>Not here</html>";
+    EXPECT_EQ(subscribe(), "There is no calendar at this address.");
+    server.status = 404;
+    EXPECT_EQ(subscribe(), "The server answered with error 404.");
+    EXPECT_EQ(store.calendars().size(), calendars);
+
+    // An empty calendar is still one, named after its host.
+    server.status = 200;
+    server.body = calendarText("");
+    EXPECT_EQ(subscribe(), "");
+    EXPECT_EQ(store.calendars().size(), calendars + 1);
+    bool named = false;
+    for (const CalendarInfo& calendar : store.calendars())
+        named = named || (calendar.isReadOnly() && calendar.name == "example.com");
+    EXPECT_TRUE(named);
+
+    // Cancelled while it was fetched: nothing is added.
+    server.body = holidayCalendar();
+    bool answered = false;
+    const int number = app.subscriptions()->subscribe("https://example.com/h.ics", Rgb{0xff, 0, 0},
+                                                      [&](const std::string&, const std::string&) { answered = true; });
+    app.subscriptions()->cancelSubscribe(number);
+    runUntil(loop, [] { return false; }, std::chrono::milliseconds(200));
+    EXPECT_FALSE(answered);
+    EXPECT_EQ(store.calendars().size(), calendars + 1);
+}
+
+TEST(HolidayFeedsTest, OwnRegionFirstInTheSessionsLanguage)
+{
+    // Both of the region's feeds lead, the one in the session's language first.
+    const std::vector<HolidayFeed> chinese = HolidayFeeds::list("zh", "SG");
+    ASSERT_GE(chinese.size(), 2u);
+    EXPECT_EQ(chinese[0].name, "新加坡节假日");
+    EXPECT_EQ(chinese[0].url, "https://calendars.icloud.com/holidays/sg_zh.ics");
+    EXPECT_EQ(chinese[1].name, "Holidays in Singapore");
+    EXPECT_EQ(chinese[1].url, "https://calendars.icloud.com/holidays/sg_en.ics");
+    EXPECT_EQ(chinese[2].region == "SG", false);
+
+    const std::vector<HolidayFeed> english = HolidayFeeds::list("en", "SG");
+    EXPECT_EQ(english[0].name, "Holidays in Singapore");
+    EXPECT_EQ(english[1].name, "新加坡节假日");
+
+    // Every feed once, with a usable address, the rest sorted by name.
+    const std::vector<HolidayFeed> feeds = HolidayFeeds::list("en", "");
+    EXPECT_EQ(feeds.size(), 62u);
+    std::vector<std::string> urls;
+    for (const HolidayFeed& feed : feeds) {
+        EXPECT_FALSE(feed.name.empty());
+        EXPECT_EQ(Subscriptions::normalizedUrl(feed.url), feed.url);
+        urls.push_back(feed.url);
+    }
+    std::sort(urls.begin(), urls.end());
+    EXPECT_EQ(std::adjacent_find(urls.begin(), urls.end()), urls.end());
+    for (size_t i = 1; i < feeds.size(); ++i)
+        EXPECT_LE(naturalCompare(feeds[i - 1].name, feeds[i].name), 0) << feeds[i].name;
 }

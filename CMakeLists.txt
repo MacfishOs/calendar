@@ -12,17 +12,21 @@ find_package(CutefishToolkit REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBICAL REQUIRED IMPORTED_TARGET libical)
 pkg_check_modules(ICU REQUIRED IMPORTED_TARGET icu-uc icu-i18n)
+pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 
 add_library(calendar-core STATIC
     src/calendarmodel.cpp
     src/calendarstore.cpp
     src/color.cpp
     src/datetime.cpp
+    src/download.cpp
     src/eventfile.cpp
     src/eventlayout.cpp
+    src/holidayfeeds.cpp
     src/localedata.cpp
     src/reminders.cpp
     src/sha1.cpp
+    src/subscriptions.cpp
     src/text.cpp
     src/timezones.cpp
     src/trash.cpp
@@ -30,7 +34,7 @@ add_library(calendar-core STATIC
     src/uuid.cpp
 )
 target_include_directories(calendar-core PUBLIC src)
-target_link_libraries(calendar-core PUBLIC Cutefish::ToolkitBase PkgConfig::LIBICAL PkgConfig::ICU)
+target_link_libraries(calendar-core PUBLIC Cutefish::ToolkitBase PkgConfig::LIBICAL PkgConfig::ICU PkgConfig::CURL)
 
 add_library(calendar-ui STATIC
     src/ui/calendarroot.cpp

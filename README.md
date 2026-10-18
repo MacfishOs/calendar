@@ -2,7 +2,8 @@
 
 The calendar of Cutefish Desktop. It shows events by day, week, month and
 year, with repeating events, alerts and several coloured calendars, and reads
-and writes standard iCalendar files.
+and writes standard iCalendar files. Calendars published on the web, such as
+public holidays, can be subscribed to and are kept up to date.
 
 Events are kept as one `.ics` file per event in
 `~/.local/share/cutefish-calendar/calendars/`, one directory per calendar.
@@ -11,10 +12,11 @@ notifications while the calendar is closed.
 
 ## Dependencies
 
-Calendar uses the Cutefish toolkit (`cutefish-toolkit`), libical and ICU.
+Calendar uses the Cutefish toolkit (`cutefish-toolkit`), libical, ICU and
+libcurl (for subscribed web calendars).
 
 ```sh
-sudo apt install cmake pkg-config libical-dev libicu-dev libgtest-dev
+sudo apt install cmake pkg-config libical-dev libicu-dev libcurl4-openssl-dev libgtest-dev
 ```
 
 ## Build and install

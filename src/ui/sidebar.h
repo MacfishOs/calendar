@@ -14,6 +14,7 @@
 namespace cutefish::ui {
 class Column;
 class Label;
+class RowLayout;
 }
 
 class CalendarRow;
@@ -35,15 +36,19 @@ private:
 
     void updateMonth();
     void updateCalendars();
+    // A heading with its add button, over a card of calendar rows.
+    cutefish::ui::RowLayout* addHeading(const std::string& text, const std::string& buttonName);
 
     CalendarWindow* m_window;
     // The month the small calendar shows; it follows the main view until
     // its own arrows move it.
     Date m_shownMonth;
     cutefish::ui::Label* m_monthLabel;
-    cutefish::ui::Label* m_heading;
+    std::vector<cutefish::ui::Label*> m_headings;
     MiniMonth* m_miniMonth;
     Card* m_calendarList;
+    cutefish::ui::RowLayout* m_subscriptionHeading;
+    Card* m_subscriptionList;
     std::vector<CalendarRow*> m_rows;
     bool m_updatePosted = false;
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);

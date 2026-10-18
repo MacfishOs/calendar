@@ -32,6 +32,7 @@ class EventDialog;
 class ImportDialog;
 class ScopeDialog;
 class SettingsDialog;
+class SubscriptionDialog;
 
 // The calendar's main window: the selected day and view, the selected event,
 // and every action the views, menus and shortcuts start.
@@ -55,6 +56,8 @@ public:
     ScopeDialog* scopeDialog() const { return m_scopeDialog.get(); }
     CalendarDialog* calendarDialog() const { return m_calendarDialog.get(); }
     ImportDialog* importDialog() const { return m_importDialog.get(); }
+    SubscriptionDialog* subscriptionDialog() const { return m_subscriptionDialog.get(); }
+    cutefish::ui::ConfirmDialog* confirmDialog() const { return m_confirmDialog.get(); }
     cutefish::ui::Toast* toast() const { return m_toast.get(); }
 
     static constexpr double SidebarWidth = 240;
@@ -111,7 +114,9 @@ public:
     void showMainMenu(cutefish::ui::View* button);
 
     void newCalendar();
+    void newSubscription();
     void editCalendar(const CalendarItem& calendar);
+    void refreshCalendar(const CalendarItem& calendar);
     void importFiles(const std::vector<std::string>& files);
     void openImportChooser();
     void openSettings();
@@ -170,6 +175,7 @@ private:
     std::unique_ptr<ScopeDialog> m_scopeDialog;
     std::unique_ptr<CalendarDialog> m_calendarDialog;
     std::unique_ptr<ImportDialog> m_importDialog;
+    std::unique_ptr<SubscriptionDialog> m_subscriptionDialog;
     std::unique_ptr<SettingsDialog> m_settingsDialog;
     std::unique_ptr<cutefish::ui::ConfirmDialog> m_confirmDialog;
     std::unique_ptr<cutefish::ui::FileChooser> m_fileChooser;
@@ -177,4 +183,5 @@ private:
     std::unique_ptr<cutefish::ui::Toast> m_toast;
 
     std::vector<cutefish::base::Subscription> m_subscriptions;
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };

@@ -416,7 +416,7 @@ void CalendarWindow::removeWithUndo(const std::string& key, const std::string& r
 void CalendarWindow::deleteEvent(const std::string& key, const std::string& recurrenceKey)
 {
     const std::optional<EventForm> form = m_model->eventData(key, recurrenceKey);
-    if (key.empty() || !form)
+    if (key.empty() || !form || form->readOnly)
         return;
     const std::string title = form->title.empty() ? std::string("New Event") : form->title;
     if (!form->recurring) {
@@ -436,6 +436,8 @@ void CalendarWindow::deleteSelected()
 
 void CalendarWindow::moveEvent(const EventItem& item, int startDays, int startMinutes, int endDays, int endMinutes)
 {
+    if (item.readOnly)
+        return;
     const std::string key = item.key;
     const std::string recurrenceKey = item.recurrenceKey;
     const auto move = [this, key, recurrenceKey, startDays, startMinutes, endDays, endMinutes](int scope) {
@@ -475,9 +477,13 @@ void CalendarWindow::showEventMenu(const EventItem& item, PointF position)
     const std::string key = item.key;
     const std::string recurrenceKey = item.recurrenceKey;
     m_contextMenu = std::make_unique<Menu>();
-    m_contextMenu->addItem("Edit…", [this, key, recurrenceKey] { editEvent(key, recurrenceKey); });
+    m_contextMenu->addItem(item.readOnly ? "Show Details…" : "Edit…",
+                           [this, key, recurrenceKey] { editEvent(key, recurrenceKey); });
     m_contextMenu->addSeparator();
-    m_contextMenu->addItem("Delete", [this, key, recurrenceKey] { deleteEvent(key, recurrenceKey); });
+    const size_t remove = m_contextMenu->addItem("Delete", [this, key, recurrenceKey] {
+        deleteEvent(key, recurrenceKey);
+    });
+    m_contextMenu->setItemEnabled(remove, !item.readOnly);
     m_contextMenu->popup(m_window.get(), position);
 }
 
@@ -495,10 +501,15 @@ void CalendarWindow::showCalendarMenu(const CalendarItem& calendar, PointF posit
 {
     m_contextMenu = std::make_unique<Menu>();
     m_contextMenu->addItem("Edit…", [this, calendar] { editCalendar(calendar); });
+    if (calendar.readOnly) {
+        const size_t refresh = m_contextMenu->addItem("Refresh", [this, calendar] { refreshCalendar(calendar); });
+        m_contextMenu->setItemEnabled(refresh, !m_model->subscriptions()->isRefreshing(calendar.id));
+    }
     m_contextMenu->addItem("Export…", [this, calendar] { exportCalendar(calendar); });
     m_contextMenu->addSeparator();
-    const size_t remove = m_contextMenu->addItem("Delete…", [this, calendar] { confirmDeleteCalendar(calendar); });
-    m_contextMenu->setItemEnabled(remove, m_model->calendars().size() > 1);
+    const size_t remove = m_contextMenu->addItem(calendar.readOnly ? "Unsubscribe…" : "Delete…",
+                                                 [this, calendar] { confirmDeleteCalendar(calendar); });
+    m_contextMenu->setItemEnabled(remove, m_model->canRemoveCalendar(calendar.id));
     m_contextMenu->popup(m_window.get(), position);
 }
 
@@ -522,6 +533,7 @@ void CalendarWindow::showMainMenu(View* button)
     m_mainMenu = std::make_unique<Menu>();
     m_mainMenu->addItem("New Event", [this] { newEventOn(m_currentDate); }, "Ctrl+N");
     m_mainMenu->addItem("New Calendar…", [this] { newCalendar(); });
+    m_mainMenu->addItem("New Subscription…", [this] { newSubscription(); });
     m_mainMenu->addItem("Import…", [this] { openImportChooser(); });
     m_mainMenu->addSeparator();
     const size_t undo = m_mainMenu->addItem(m_model->canUndo() ? m_model->undoText() : std::string("Undo"),
@@ -540,6 +552,30 @@ void CalendarWindow::newCalendar()
     editCalendar({});
 }
 
+void CalendarWindow::newSubscription()
+{
+    m_subscriptionDialog = std::make_unique<SubscriptionDialog>(m_window.get(), m_model);
+    SubscriptionDialog* dialog = m_subscriptionDialog.get();
+    dialog->onSubscribed = [this](const std::string& id) {
+        showPassiveNotification("Subscribed to “" + m_model->store()->calendar(id).name + "”");
+    };
+    dialog->onClosed = [this, dialog] {
+        if (m_subscriptionDialog.get() == dialog)
+            deleteLater(m_subscriptionDialog);
+    };
+    dialog->show();
+}
+
+void CalendarWindow::refreshCalendar(const CalendarItem& calendar)
+{
+    const std::string name = calendar.name;
+    m_model->subscriptions()->refresh(calendar.id, [this, name, alive = std::weak_ptr<bool>(m_alive)](
+                                                       const std::string& error) {
+        if (!alive.expired() && !error.empty())
+            showPassiveNotification("“" + name + "” could not be refreshed. " + error);
+    });
+}
+
 void CalendarWindow::editCalendar(const CalendarItem& calendar)
 {
     m_calendarDialog = std::make_unique<CalendarDialog>(m_window.get(), m_model,
@@ -555,6 +591,16 @@ void CalendarWindow::editCalendar(const CalendarItem& calendar)
 
 void CalendarWindow::confirmDeleteCalendar(const CalendarItem& calendar)
 {
+    const std::string id = calendar.id;
+    if (calendar.readOnly) {
+        m_confirmDialog = std::make_unique<ConfirmDialog>(m_window.get(), "Unsubscribe from “" + calendar.name + "”?",
+                                                          "Its events are removed from this computer.");
+        m_confirmDialog->setConfirmText("Unsubscribe");
+        m_confirmDialog->setDestructive(true);
+        m_confirmDialog->onAccepted = [this, id] { m_model->removeCalendar(id); };
+        m_confirmDialog->show();
+        return;
+    }
     const int count = m_model->eventCount(calendar.id);
     m_confirmDialog = std::make_unique<ConfirmDialog>(
         m_window.get(), "Delete “" + calendar.name + "”?",
@@ -562,7 +608,6 @@ void CalendarWindow::confirmDeleteCalendar(const CalendarItem& calendar)
                    : "Its " + std::to_string(count) + " events are moved to the trash.");
     m_confirmDialog->setConfirmText("Delete");
     m_confirmDialog->setDestructive(true);
-    const std::string id = calendar.id;
     m_confirmDialog->onAccepted = [this, id] { m_model->removeCalendar(id); };
     m_confirmDialog->show();
 }

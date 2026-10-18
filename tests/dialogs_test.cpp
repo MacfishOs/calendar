@@ -411,6 +411,194 @@ TEST_F(DialogsTest, OneFileIsNamedWithoutItsEscapes)
     EXPECT_FALSE(m_window->importDialog());
 }
 
+// Runs the loop until the condition holds, at most for the timeout.
+static bool runUntil(const std::function<bool()>& condition, std::chrono::milliseconds timeout = std::chrono::seconds(5))
+{
+    cutefish::base::EventLoop& loop = Application::instance()->loop();
+    if (condition())
+        return true;
+    const int check = loop.startTimer(std::chrono::milliseconds(10), true, [&] {
+        if (condition())
+            loop.quit();
+    });
+    const int expire = loop.startTimer(timeout, false, [&] { loop.quit(); });
+    loop.run();
+    loop.stopTimer(check);
+    loop.stopTimer(expire);
+    return condition();
+}
+
+static const char HolidayEvents[] = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:Holidays\r\n"
+                                  "BEGIN:VEVENT\r\nUID:national-day\r\nDTSTART;VALUE=DATE:20261001\r\n"
+                                  "DTEND;VALUE=DATE:20261008\r\nSUMMARY:National Day\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+TEST_F(DialogsTest, TheSubscriptionDialogSubscribesOrSaysWhyNot)
+{
+    long status = 404;
+    m_model->subscriptions()->setFetch([&status](const std::string&, const std::string&, const std::string&) {
+        Download answer;
+        answer.status = status;
+        answer.body = status == 200 ? HolidayEvents : "";
+        return answer;
+    });
+    EXPECT_TRUE(find(m_window->window(), "subscriptionList").empty());
+
+    m_window->newSubscription();
+    SubscriptionDialog* dialog = m_window->subscriptionDialog();
+    ASSERT_TRUE(dialog);
+    Window* frame = dialog->window();
+    advance(*frame);
+    EXPECT_EQ(frame->size().width, 380);
+    auto* url = one<TextField>(frame, "subscriptionUrl");
+    auto* subscribe = one<View>(frame, "subscribeButton");
+    ASSERT_TRUE(url && subscribe);
+    EXPECT_FALSE(subscribe->isEnabled());
+    EXPECT_TRUE(find(frame, "subscriptionError").empty());
+
+    TestInput::typeText(*frame, "not an address");
+    TestInput::typeKey(*frame, key::Return);
+    advance(*frame);
+    auto* error = one<Label>(frame, "subscriptionError");
+    ASSERT_TRUE(error);
+    EXPECT_EQ(error->text(), "This is not a web address.");
+
+    // The server's answer keeps the dialog open; typing puts the reason away.
+    url->setFocus();
+    url->selectAll();
+    TestInput::typeText(*frame, "webcal://example.com/holidays.ics");
+    EXPECT_TRUE(find(frame, "subscriptionError").empty());
+    TestInput::click(*frame, centreOf(subscribe));
+    EXPECT_TRUE(dialog->isBusy());
+    EXPECT_FALSE(subscribe->isEnabled());
+    ASSERT_TRUE(runUntil([&] { return !dialog->isBusy(); }));
+    advance(*frame);
+    error = one<Label>(frame, "subscriptionError");
+    ASSERT_TRUE(error);
+    EXPECT_EQ(error->text(), "The server answered with error 404.");
+    EXPECT_TRUE(subscribe->isEnabled());
+
+    status = 200;
+    TestInput::click(*frame, centreOf(subscribe));
+    ASSERT_TRUE(runUntil([&] { return !m_window->subscriptionDialog(); }));
+    std::string id;
+    for (const CalendarItem& calendar : m_model->calendars()) {
+        if (calendar.readOnly)
+            id = calendar.id;
+    }
+    ASSERT_FALSE(id.empty());
+    EXPECT_EQ(m_store->calendar(id).name, "Holidays");
+    EXPECT_EQ(m_store->eventCount(id), 1);
+
+    // Its own section in the sidebar, under the user's calendars.
+    runPosted();
+    advance(*m_window->window());
+    View* calendars = one<View>(m_window->window(), "calendarList");
+    View* heading = one<View>(m_window->window(), "subscriptionsHeading");
+    View* subscriptions = one<View>(m_window->window(), "subscriptionList");
+    ASSERT_TRUE(calendars && heading && subscriptions);
+    const double calendarsBottom = calendars->mapToWindow({0, calendars->geometry().height}).y;
+    const double headingTop = heading->parent()->mapToWindow({0, 0}).y;
+    const double headingBottom = heading->parent()->mapToWindow({0, heading->parent()->geometry().height}).y;
+    EXPECT_EQ(headingTop - calendarsBottom, 12);
+    EXPECT_EQ(subscriptions->mapToWindow({0, 0}).y - headingBottom, 12);
+    EXPECT_EQ(subscriptions->children().front()->children().size(), 1u);
+}
+
+TEST_F(DialogsTest, PublicHolidaysArePickedFromAList)
+{
+    const std::vector<HolidayFeed> feeds = HolidayFeeds::list();
+    ASSERT_GE(feeds.size(), 2u);
+    m_store->createSubscription(feeds[1].name, Rgb{0xff, 0, 0}, {.url = feeds[1].url});
+    std::string fetched;
+    m_model->subscriptions()->setFetch([&fetched](const std::string& url, const std::string&, const std::string&) {
+        fetched = url;
+        Download answer;
+        answer.status = 200;
+        answer.body = HolidayEvents;
+        return answer;
+    });
+
+    m_window->newSubscription();
+    SubscriptionDialog* dialog = m_window->subscriptionDialog();
+    ASSERT_TRUE(dialog);
+    Window* frame = dialog->window();
+    advance(*frame);
+    const double closedHeight = frame->size().height;
+    EXPECT_TRUE(find(frame, "holidayList").empty());
+
+    TestInput::click(*frame, centreOf(one<View>(frame, "holidaysToggle")));
+    advance(*frame);
+    advance(*frame);
+    EXPECT_TRUE(dialog->holidaysShown());
+    View* list = one<View>(frame, "holidayList");
+    ASSERT_TRUE(list);
+    EXPECT_EQ(list->geometry().height, 6 * 34 + 12);
+    EXPECT_EQ(frame->size().height, closedHeight + 16 + list->geometry().height);
+    const std::vector<View*> rows = find(frame, "holidayRow");
+    ASSERT_EQ(rows.size(), feeds.size());
+    // One gap of 6 to the card's edges.
+    const PointF card = list->mapToWindow({0, 0});
+    const PointF first = rows[0]->mapToWindow({0, 0});
+    EXPECT_EQ(first.x - card.x, 6);
+    EXPECT_EQ(first.y - card.y, 6);
+    EXPECT_EQ(list->geometry().width - rows[0]->geometry().width, 12);
+
+    auto* url = one<TextField>(frame, "subscriptionUrl");
+    ASSERT_TRUE(url);
+    // A region already subscribed to is not picked again.
+    TestInput::click(*frame, centreOf(rows[1]));
+    EXPECT_EQ(url->text(), "");
+    TestInput::click(*frame, centreOf(rows[0]));
+    EXPECT_EQ(url->text(), feeds[0].url);
+    EXPECT_TRUE(one<View>(frame, "subscribeButton")->isEnabled());
+
+    TestInput::click(*frame, centreOf(one<View>(frame, "subscribeButton")));
+    ASSERT_TRUE(runUntil([&] { return !m_window->subscriptionDialog(); }));
+    EXPECT_EQ(fetched, feeds[0].url);
+    int subscriptions = 0;
+    for (const CalendarInfo& calendar : m_store->calendars())
+        subscriptions += calendar.isReadOnly() && calendar.url == feeds[0].url;
+    EXPECT_EQ(subscriptions, 1);
+}
+
+TEST_F(DialogsTest, ASubscribedEventOpensReadOnly)
+{
+    const std::string id = m_store->createSubscription("Holidays", Rgb{0xff, 0, 0},
+                                                       {.url = "https://example.com/holidays.ics"});
+    ASSERT_EQ(m_store->replaceEvents(id, EventFile::split(HolidayEvents)), 1);
+    const std::string key = m_store->keys().front().starts_with(id) ? m_store->keys().front() : m_store->keys().back();
+
+    m_window->editEvent(key, {});
+    ASSERT_TRUE(m_window->editor());
+    Window* frame = m_window->editor()->window();
+    advance(*frame);
+    EXPECT_TRUE(find(frame, "saveButton").empty());
+    EXPECT_TRUE(find(frame, "deleteButton").empty());
+    ASSERT_TRUE(one<View>(frame, "closeButton"));
+    auto* title = one<TextField>(frame, "titleField");
+    ASSERT_TRUE(title);
+    EXPECT_EQ(title->text(), "National Day");
+    TestInput::typeText(*frame, "Changed");
+    EXPECT_EQ(title->text(), "National Day");
+    EXPECT_FALSE(one<View>(frame, "allDaySwitch")->isEnabled());
+    auto* calendar = one<ComboBox>(frame, "calendarBox");
+    ASSERT_TRUE(calendar);
+    EXPECT_FALSE(calendar->isEnabled());
+    EXPECT_EQ(calendar->currentText(), "Holidays");
+
+    TestInput::typeKey(*frame, key::Return, ControlModifier);
+    TestInput::click(*frame, centreOf(one<View>(frame, "closeButton")));
+    runPosted();
+    EXPECT_FALSE(m_window->editor());
+    EXPECT_EQ(m_store->event(key)->summary(), "National Day");
+
+    // Nor does the keyboard delete it.
+    m_window->deleteEvent(key, {});
+    runPosted();
+    EXPECT_TRUE(m_store->event(key));
+    EXPECT_FALSE(m_window->scopeDialog());
+}
+
 TEST_F(DialogsTest, SettingsChangeTheWeek)
 {
     SettingsDialog settings(m_window->window(), m_model.get());

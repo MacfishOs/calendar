@@ -19,6 +19,8 @@ enum class Width {
 
 // The language's code, such as "en".
 std::string language();
+// The session's ISO 3166 region, such as "SG"; empty when it names none.
+std::string region();
 // Chinese, Japanese and Korean write dates with their own counters.
 bool isCjk();
 

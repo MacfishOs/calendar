@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "eventfile.h"
+#include "text.h"
 #include "timezones.h"
 #include "uuid.h"
 
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <functional>
+#include <strings.h>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -808,6 +810,53 @@ std::vector<std::unique_ptr<EventFile>> EventFile::split(std::string_view data)
     }
     icalcomponent_free(root);
     return files;
+}
+
+FeedInfo EventFile::feedInfo(std::string_view data)
+{
+    FeedInfo info;
+    icalcomponent* root = parse(data);
+    if (!root)
+        return info;
+    icalcomponent* calendar = icalcomponent_isa(root) == ICAL_XROOT_COMPONENT
+            ? icalcomponent_get_first_component(root, ICAL_VCALENDAR_COMPONENT)
+            : root;
+    if (!calendar || icalcomponent_isa(calendar) != ICAL_VCALENDAR_COMPONENT) {
+        icalcomponent_free(root);
+        return info;
+    }
+
+    std::string xName;
+    std::string xTtl;
+    for (icalproperty* property : properties(calendar, ICAL_X_PROPERTY)) {
+        const char* name = icalproperty_get_x_name(property);
+        const char* value = icalproperty_get_x(property);
+        if (!name || !value)
+            continue;
+        if (strcasecmp(name, "X-WR-CALNAME") == 0)
+            xName = value;
+        else if (strcasecmp(name, "X-PUBLISHED-TTL") == 0)
+            xTtl = value;
+    }
+    // RFC 7986 first, then the older extensions most publishers write.
+    if (icalproperty* name = icalcomponent_get_first_property(calendar, ICAL_NAME_PROPERTY)) {
+        if (const char* value = icalvalue_get_text(icalproperty_get_value(name)))
+            info.name = value;
+    }
+    if (info.name.empty())
+        info.name = xName;
+    info.name = trimmed(info.name);
+
+    icaldurationtype interval = icaldurationtype_null_duration();
+    if (icalproperty* refresh = icalcomponent_get_first_property(calendar, ICAL_REFRESHINTERVAL_PROPERTY))
+        interval = icalproperty_get_refreshinterval(refresh);
+    else if (!xTtl.empty())
+        interval = icaldurationtype_from_string(trimmed(xTtl).c_str());
+    if (!icaldurationtype_is_bad_duration(interval) && !icaldurationtype_is_null_duration(interval))
+        info.refreshSeconds = std::max(0, icaldurationtype_as_int(interval));
+
+    icalcomponent_free(root);
+    return info;
 }
 
 std::unique_ptr<EventFile> EventFile::create(const EventData& data)

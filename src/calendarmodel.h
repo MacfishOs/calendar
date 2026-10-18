@@ -4,6 +4,7 @@
 #pragma once
 
 #include "calendarstore.h"
+#include "subscriptions.h"
 
 #include <base/settings.h>
 #include <base/signal.h>
@@ -20,6 +21,8 @@ struct CalendarItem
     std::string name;
     Rgb color;
     bool visible = true;
+    // A subscription: its events are shown, not edited.
+    bool readOnly = false;
 };
 
 // An occurrence as the views show it, with its place in a layout.
@@ -31,6 +34,7 @@ struct EventItem
     std::string location;
     bool allDay = false;
     bool recurring = false;
+    bool readOnly = false;
     Rgb color;
     std::string calendarId;
     Date firstDay;
@@ -90,6 +94,8 @@ struct EventForm
     std::string calendarId;
     bool recurring = false;
     bool firstOccurrence = true;
+    // In a subscription: shown, not saved.
+    bool readOnly = false;
 
     std::string title;
     std::string location;
@@ -119,11 +125,15 @@ public:
     CalendarModel& operator=(const CalendarModel&) = delete;
 
     CalendarStore* store() const { return m_store; }
+    Subscriptions* subscriptions() { return &m_subscriptions; }
 
     bool isReady() const { return m_store->isReady(); }
     // Bumped on every change to calendars or events; layouts depend on it.
     int revision() const { return m_revision; }
     std::vector<CalendarItem> calendars() const;
+    // The calendars events can be added to: the user's own, not subscriptions.
+    std::vector<CalendarItem> writableCalendars() const;
+    // Always one of the writable calendars.
     std::string defaultCalendar() const;
     void setDefaultCalendar(const std::string& id);
     Date today() const { return m_today; }
@@ -163,6 +173,8 @@ public:
 
     std::string createCalendar(const std::string& name, Rgb color);
     bool updateCalendar(const std::string& id, const std::string& name, Rgb color);
+    // The last of the user's own calendars stays; subscriptions can always go.
+    bool canRemoveCalendar(const std::string& id) const;
     bool removeCalendar(const std::string& id);
     void setCalendarVisible(const std::string& id, bool visible);
     int eventCount(const std::string& id) const;
@@ -209,6 +221,7 @@ private:
     void saveHidden();
 
     CalendarStore* m_store;
+    Subscriptions m_subscriptions;
     cutefish::base::Settings m_settings;
     int m_revision = 0;
     Date m_today;

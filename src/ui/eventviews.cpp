@@ -28,7 +28,7 @@ EventPointer::EventPointer(CalendarWindow* window, View* view)
 void EventPointer::press(const PointerEvent& event)
 {
     m_pressPoint = event.position;
-    m_pressed = event.button == MouseButton::Left;
+    m_pressed = event.button == MouseButton::Left && !(m_item && m_item->readOnly);
     if (m_dragging) {
         m_dragging = false;
         if (onDraggingChanged)
@@ -265,7 +265,7 @@ EventBlock::EventBlock(CalendarWindow* window, TimeGridView* grid, EventItem ite
         label->setFontSize(Style::points(8));
     m_title->setWeight(500);
     m_resizer = addChild<Resizer>(this);
-    m_resizer->setVisible(!m_item.continuesAfter && !m_item.allDay);
+    m_resizer->setVisible(!m_item.continuesAfter && !m_item.allDay && !m_item.readOnly);
 
     m_pointer.setItem(&m_item);
     m_pointer.onDragMoved = [this](PointF point) {

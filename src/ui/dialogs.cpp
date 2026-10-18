@@ -16,11 +16,13 @@
 #include <ui/dialog_window.h>
 #include <ui/drop_down_popup.h>
 #include <ui/header_button.h>
+#include <ui/icon.h>
 #include <ui/keys.h>
 #include <ui/label.h>
 #include <ui/layout.h>
 #include <ui/painter.h>
 #include <ui/round_image_button.h>
+#include <ui/scroll_view.h>
 #include <ui/switch.h>
 #include <ui/text_field.h>
 #include <ui/window.h>
@@ -306,6 +308,349 @@ void CalendarDialog::accept()
     close();
 }
 
+// The first colour no calendar has yet.
+static Rgb unusedColor(const CalendarModel* model)
+{
+    const std::vector<CalendarItem> calendars = model->calendars();
+    for (const Rgb& color : calendarColors()) {
+        if (std::none_of(calendars.begin(), calendars.end(), [&color](const CalendarItem& calendar) {
+                return calendar.color == color;
+            }))
+            return color;
+    }
+    return calendarColors().front();
+}
+
+// Shows or hides the holiday calendars: their heading and a chevron.
+class SubscriptionDialog::HolidayToggle : public View
+{
+public:
+    explicit HolidayToggle(std::function<void()> toggled)
+        : m_toggled(std::move(toggled))
+        , m_label(addChild<Label>("Public Holidays"))
+        , m_chevron(addChild<Icon>("chevron-right", 16))
+    {
+        setName("holidaysToggle");
+        m_label->setVerticallyCentered(true);
+    }
+
+    void setOpen(bool open)
+    {
+        m_chevron->setIconName(open ? "chevron-down" : "chevron-right");
+    }
+
+    SizeF sizeHint() const override { return {0, 32}; }
+    double heightForWidth(double) const override { return 32; }
+    bool acceptsPointer() const override { return true; }
+
+protected:
+    void layout() override
+    {
+        const double width = geometry().width;
+        const double height = geometry().height;
+        m_label->setColor(ColorId::Text);
+        m_label->setGeometry({0, 0, std::max(0.0, width - 16 - 8), height});
+        m_chevron->setColor(Theme::current().disabledText);
+        m_chevron->setGeometry({width - 16, Style::centred(height, 16), 16, 16});
+    }
+
+    void pointerRelease(const PointerEvent& event) override
+    {
+        if (event.button == MouseButton::Left && localRect().contains(event.position) && m_toggled)
+            m_toggled();
+    }
+
+private:
+    std::function<void()> m_toggled;
+    Label* m_label;
+    Icon* m_chevron;
+};
+
+// A holiday calendar to pick; a check once subscribed to.
+class SubscriptionDialog::HolidayRow : public View
+{
+public:
+    HolidayRow(std::string name, std::function<void()> clicked)
+        : m_clicked(std::move(clicked))
+        , m_name(addChild<Label>(std::move(name)))
+        , m_check(addChild<Icon>("check", 16))
+    {
+        setName("holidayRow");
+    }
+
+    bool isSubscribed() const { return m_subscribed; }
+    bool isChosen() const { return m_chosen; }
+
+    void setState(bool subscribed, bool chosen)
+    {
+        if (subscribed == m_subscribed && chosen == m_chosen)
+            return;
+        m_subscribed = subscribed;
+        m_chosen = chosen;
+        requestLayout();
+        requestPaint();
+    }
+
+    SizeF sizeHint() const override { return {0, 34}; }
+    double heightForWidth(double) const override { return 34; }
+    bool acceptsPointer() const override { return true; }
+
+protected:
+    void layout() override
+    {
+        const Theme& theme = Theme::current();
+        const double width = geometry().width;
+        const double height = geometry().height;
+        m_check->setVisible(m_subscribed);
+        m_check->setColor(m_chosen ? theme.highlightedText : theme.highlight);
+        m_check->setGeometry({width - 10 - 16, Style::centred(height, 16), 16, 16});
+        m_name->setColor(m_chosen ? theme.highlightedText : m_subscribed ? theme.disabledText : theme.text);
+        // As the delegate's RowLayout places it: whole pixels, centred.
+        const double nameHeight = m_name->sizeHint().height;
+        m_name->setGeometry({10, std::round((height - nameHeight) / 2), std::max(0.0, width - 20 - 16 - 8),
+                             nameHeight});
+    }
+
+    void paint(Painter& painter) override
+    {
+        const Theme& theme = Theme::current();
+        // Inset 6 into the radius 10 card.
+        const double radius = theme.mediumRadius - 6;
+        if (m_chosen)
+            painter.fillRoundedRect(localRect(), radius, theme.highlight);
+        else if (m_subscribed)
+            return;
+        else if (m_pressed)
+            painter.fillRoundedRect(localRect(), radius, Style::withAlpha(theme.text, 0.08));
+        else if (m_hovered)
+            painter.fillRoundedRect(localRect(), radius, Style::withAlpha(theme.text, 0.04));
+    }
+
+    void pointerEnter() override
+    {
+        m_hovered = true;
+        requestPaint();
+    }
+
+    void pointerLeave() override
+    {
+        m_hovered = false;
+        requestPaint();
+    }
+
+    void pointerPress(const PointerEvent& event) override
+    {
+        if (event.button == MouseButton::Left && !m_subscribed) {
+            m_pressed = true;
+            requestPaint();
+        }
+    }
+
+    void pointerRelease(const PointerEvent& event) override
+    {
+        if (!m_pressed)
+            return;
+        m_pressed = false;
+        requestPaint();
+        if (localRect().contains(event.position) && m_clicked)
+            m_clicked();
+    }
+
+private:
+    std::function<void()> m_clicked;
+    Label* m_name;
+    Icon* m_check;
+    bool m_subscribed = false;
+    bool m_chosen = false;
+    bool m_hovered = false;
+    bool m_pressed = false;
+};
+
+namespace {
+
+// A card of rows that scroll under a fixed height.
+class HolidayList : public View
+{
+public:
+    static constexpr double Inset = 6;
+    static constexpr double VisibleRows = 6;
+
+    HolidayList()
+        : m_scroll(addChild<ScrollView>())
+    {
+        setName("holidayList");
+        m_scroll->setClipsChildren(true);
+        m_column = m_scroll->setContent<Column>();
+        m_column->setMargins({Inset, 0, Inset, 0});
+        m_column->setSpacing(0);
+    }
+
+    Column* column() const { return m_column; }
+    ScrollView* scrollView() const { return m_scroll; }
+
+    double heightForWidth(double) const override { return VisibleRows * 34 + 2 * Inset; }
+    SizeF sizeHint() const override { return {0, heightForWidth(0)}; }
+
+protected:
+    void layout() override
+    {
+        // Rows stop short of the rounded corners as they scroll.
+        m_scroll->setGeometry({0, Inset, geometry().width, std::max(0.0, geometry().height - 2 * Inset)});
+    }
+
+    void paint(Painter& painter) override
+    {
+        const Theme& theme = Theme::current();
+        painter.fillRoundedRect(localRect(), theme.mediumRadius, Style::withAlpha(theme.text, 0.04));
+    }
+
+private:
+    ScrollView* m_scroll;
+    Column* m_column = nullptr;
+};
+
+}
+
+SubscriptionDialog::SubscriptionDialog(Window* parent, CalendarModel* model)
+    : SmallDialog(parent, "New Subscription", 380)
+    , m_model(model)
+    , m_color(unusedColor(model))
+    , m_feeds(HolidayFeeds::list())
+{
+    addTitle("New Subscription")->setName("dialogTitle");
+    addText("A calendar published on the web, such as public holidays. It is kept up to date and cannot be edited.");
+
+    m_url = column()->addChild<TextField>();
+    m_url->setName("subscriptionUrl");
+    m_url->setPlaceholder("webcal:// or https:// address");
+    m_url->setLayoutHints({.fillWidth = true});
+    m_url->onAccepted = [this] { accept(); };
+    m_url->onTextChanged = [this] {
+        m_error->setVisible(false);
+        update();
+    };
+
+    // Up against the field above.
+    m_error = column()->addChild<Label>();
+    m_error->setName("subscriptionError");
+    m_error->setFontSize(Style::points(8));
+    m_error->setWrap(true);
+    m_error->setVisible(false);
+    m_error->setLayoutHints({.fillWidth = true, .margins = {4, -10, 0, 0}});
+
+    m_holidayToggle = column()->addChild<HolidayToggle>([this] { setHolidaysShown(!holidaysShown()); });
+    m_holidayToggle->setLayoutHints({.fillWidth = true, .margins = {0, -8, 0, -8}});
+    auto* holidays = column()->addChild<HolidayList>();
+    holidays->setLayoutHints({.fillWidth = true});
+    holidays->setVisible(false);
+    m_holidayList = holidays;
+    for (const HolidayFeed& feed : m_feeds) {
+        const std::string url = feed.url;
+        HolidayRow* row = holidays->column()->addChild<HolidayRow>(feed.name, [this, url] {
+            m_url->setText(url);
+            update();
+        });
+        row->setLayoutHints({.fillWidth = true});
+        m_holidayRows.push_back(row);
+    }
+
+    Row* swatches = column()->addChild<Row>();
+    swatches->setSpacing(10);
+    swatches->setLayoutHints({.horizontalAlignment = Alignment::Center});
+    for (const Rgb& color : calendarColors()) {
+        m_swatches.push_back(swatches->addChild<Swatch>(color, [this, color] {
+            m_color = color;
+            updateSwatches();
+        }));
+    }
+    updateSwatches();
+
+    RowLayout* actions = addActions(column());
+    actions->addChild<DialogButton>("Cancel")->onClicked = [this] { close(); };
+    m_subscribe = actions->addChild<DialogButton>("Subscribe", true);
+    m_subscribe->setName("subscribeButton");
+    m_subscribe->onClicked = [this] { accept(); };
+    update();
+
+    m_url->setFocus();
+}
+
+SubscriptionDialog::~SubscriptionDialog()
+{
+    if (isBusy())
+        m_model->subscriptions()->cancelSubscribe(m_pending);
+}
+
+void SubscriptionDialog::updateSwatches()
+{
+    for (size_t i = 0; i < m_swatches.size(); ++i)
+        static_cast<Swatch*>(m_swatches[i])->setChosen(calendarColors()[i] == m_color);
+}
+
+bool SubscriptionDialog::holidaysShown() const
+{
+    return m_holidayList->isVisible();
+}
+
+void SubscriptionDialog::setHolidaysShown(bool shown)
+{
+    m_holidayList->setVisible(shown);
+    m_holidayToggle->setOpen(shown);
+    column()->requestLayout();
+}
+
+void SubscriptionDialog::update()
+{
+    const std::string url = Subscriptions::normalizedUrl(m_url->text());
+    std::vector<std::string> subscribed;
+    for (const CalendarInfo& calendar : m_model->store()->calendars()) {
+        if (calendar.isReadOnly())
+            subscribed.push_back(calendar.url);
+    }
+    for (size_t i = 0; i < m_holidayRows.size(); ++i) {
+        const std::string& feed = m_feeds[i].url;
+        const bool isSubscribed = std::find(subscribed.begin(), subscribed.end(), feed) != subscribed.end();
+        m_holidayRows[i]->setState(isSubscribed, !isSubscribed && feed == url);
+        m_holidayRows[i]->setEnabled(!isBusy());
+    }
+    m_url->setEnabled(!isBusy());
+    m_subscribe->setText(isBusy() ? "Subscribing…" : "Subscribe");
+    m_subscribe->setEnabled(!isBusy() && !trimmed(m_url->text()).empty());
+}
+
+void SubscriptionDialog::accept()
+{
+    if (isBusy() || trimmed(m_url->text()).empty())
+        return;
+    const auto showError = [this](const std::string& error) {
+        m_error->setText(error);
+        m_error->setColor(Style::red());
+        m_error->setVisible(true);
+        update();
+        m_url->setFocus();
+        m_url->selectAll();
+    };
+    // Checked here, as subscribe() would answer before returning.
+    if (Subscriptions::normalizedUrl(m_url->text()).empty()) {
+        showError("This is not a web address.");
+        return;
+    }
+    m_error->setVisible(false);
+    m_pending = m_model->subscriptions()->subscribe(m_url->text(), m_color, [this, showError](const std::string& id,
+                                                                                             const std::string& error) {
+        m_pending = -1;
+        if (id.empty()) {
+            showError(error);
+            return;
+        }
+        auto subscribed = onSubscribed;
+        close();
+        if (subscribed)
+            subscribed(id);
+    });
+    update();
+}
+
 static std::string fileNameOf(const std::string& file)
 {
     std::string name = file.substr(file.find_last_of('/') + 1);
@@ -339,7 +684,7 @@ ImportDialog::ImportDialog(Window* parent, CalendarModel* model, std::vector<std
     target->addChild<Label>("Add to");
     std::vector<std::string> names;
     int current = 0;
-    const std::vector<CalendarItem> calendars = model->calendars();
+    const std::vector<CalendarItem> calendars = model->writableCalendars();
     for (size_t i = 0; i < calendars.size(); ++i) {
         names.push_back(calendars[i].name);
         if (calendars[i].id == model->defaultCalendar())
@@ -361,7 +706,7 @@ ImportDialog::ImportDialog(Window* parent, CalendarModel* model, std::vector<std
 
 void ImportDialog::accept()
 {
-    const std::vector<CalendarItem> calendars = m_model->calendars();
+    const std::vector<CalendarItem> calendars = m_model->writableCalendars();
     const int index = m_calendar->currentIndex();
     const std::vector<std::string> files = m_files;
     const std::string calendarId = index >= 0 && size_t(index) < calendars.size() ? calendars[size_t(index)].id

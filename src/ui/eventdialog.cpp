@@ -85,7 +85,10 @@ static TextField* plainField(FormCard* card, const std::string& text, const std:
 EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     : m_model(model)
     , m_event(std::move(event))
-    , m_dialog(std::make_unique<DialogWindow>(parent, m_event.key.empty() ? "New Event" : "Edit Event", 480))
+    , m_dialog(std::make_unique<DialogWindow>(parent, m_event.key.empty() ? "New Event"
+                                                      : m_event.readOnly ? "Event"
+                                                                         : "Edit Event",
+                                              480))
 {
     m_allDay = m_event.allDay;
     m_startDate = m_event.start.date();
@@ -212,7 +215,7 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
 
     std::vector<std::string> calendars;
     int calendarIndex = 0;
-    const std::vector<CalendarItem> items = model->calendars();
+    const std::vector<CalendarItem> items = m_event.readOnly ? model->calendars() : model->writableCalendars();
     for (size_t i = 0; i < items.size(); ++i) {
         calendars.push_back(items[i].name);
         if (items[i].id == m_event.calendarId)
@@ -237,7 +240,20 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     RowLayout* actions = content->addChild<RowLayout>();
     actions->setSpacing(8);
     actions->setLayoutHints({.fillWidth = true, .margins = {0, 4, 0, 0}});
-    if (!isNew()) {
+    if (m_event.readOnly) {
+        // A subscription's event: shown as it is, with nothing to save.
+        for (TextField* field : {m_title, m_location})
+            field->setReadOnly(true);
+        m_notes->setReadOnly(true);
+        for (View* control : std::initializer_list<View*>{m_allDaySwitch, m_startDateButton, m_startTime,
+                                                          m_endDateButton, m_endTime, m_repeatBox, m_repeatEndBox,
+                                                          m_untilButton, m_countField, m_alarmBox, m_calendarBox})
+            control->setEnabled(false);
+        actions->addChild<View>()->setLayoutHints({.fillWidth = true});
+        DialogButton* done = actions->addChild<DialogButton>("Close", true);
+        done->setName("closeButton");
+        done->onClicked = [this] { close(); };
+    } else if (!isNew()) {
         DialogButton* remove = actions->addChild<DialogButton>("Delete Event");
         remove->setName("deleteButton");
         remove->onClicked = [this] {
@@ -245,11 +261,13 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
                 onDeleteRequested();
         };
     }
-    actions->addChild<View>()->setLayoutHints({.fillWidth = true});
-    actions->addChild<DialogButton>("Cancel")->onClicked = [this] { close(); };
-    m_saveButton = actions->addChild<DialogButton>(isNew() ? "Add" : "Save", true);
-    m_saveButton->setName("saveButton");
-    m_saveButton->onClicked = [this] { save(); };
+    if (!m_event.readOnly) {
+        actions->addChild<View>()->setLayoutHints({.fillWidth = true});
+        actions->addChild<DialogButton>("Cancel")->onClicked = [this] { close(); };
+        m_saveButton = actions->addChild<DialogButton>(isNew() ? "Add" : "Save", true);
+        m_saveButton->setName("saveButton");
+        m_saveButton->onClicked = [this] { save(); };
+    }
 
     m_dialog->setContentView(std::move(content));
     // Escape puts away an open date picker first.
@@ -301,7 +319,8 @@ Window* EventDialog::window() const
 void EventDialog::show()
 {
     m_dialog->show();
-    m_title->setFocus();
+    if (!m_event.readOnly)
+        m_title->setFocus();
 }
 
 void EventDialog::close()
@@ -388,7 +407,8 @@ void EventDialog::update()
     const bool valid = isValid();
     m_error->setVisible(!valid);
     m_error->setColor(Style::red());
-    m_saveButton->setEnabled(valid);
+    if (m_saveButton)
+        m_saveButton->setEnabled(valid);
 
     m_repeatBox->setCurrentIndex(std::max(0, int(std::find(m_repeatValues.begin(), m_repeatValues.end(), m_repeat)
                                                  - m_repeatValues.begin()) % int(m_repeatValues.size())));
@@ -411,7 +431,7 @@ void EventDialog::update()
 
 void EventDialog::save()
 {
-    if (!isValid())
+    if (m_event.readOnly || !isValid())
         return;
     EventForm form = m_event;
     form.title = m_title->text();
@@ -428,7 +448,7 @@ void EventDialog::save()
     const Alarm& choice = choices[size_t(std::clamp(m_alarmIndex, 0, int(choices.size()) - 1))];
     form.alarm = choice.alarm;
     form.alarmOffset = choice.offset;
-    const std::vector<CalendarItem> calendars = m_model->calendars();
+    const std::vector<CalendarItem> calendars = m_model->writableCalendars();
     const int index = m_calendarBox->currentIndex();
     if (index >= 0 && size_t(index) < calendars.size())
         form.calendarId = calendars[size_t(index)].id;
