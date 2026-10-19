@@ -71,7 +71,7 @@ static std::string timeText(const Occurrence& occurrence)
 // when the runtime is not there.
 static void startCalendar(dbus::Connection* bus, const std::vector<std::string>& command)
 {
-    dbus::Proxy runtime(bus, "com.cutefish.AppRuntime", "/AppRuntime", "com.cutefish.AppRuntime");
+    dbus::Proxy runtime(bus, "org.cutefish.AppRuntime", "/AppRuntime", "org.cutefish.AppRuntime");
     runtime.setTimeout(std::chrono::seconds(5));
     const dbus::Reply reply = runtime.call("launchCommand", std::string("cutefish-calendar"), command, std::string(),
                                            std::string());

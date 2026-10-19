@@ -11,7 +11,7 @@ int main()
 {
     cutefish::base::EventLoop loop;
     cutefish::base::dbus::Connection* bus = cutefish::base::dbus::Connection::session(&loop);
-    if (!bus || !bus->requestName("com.cutefish.CalendarReminders"))
+    if (!bus || !bus->requestName("org.cutefish.CalendarReminders"))
         return 0;
 
     CalendarStore store;

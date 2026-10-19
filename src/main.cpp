@@ -51,8 +51,8 @@ int main(int argc, char** argv)
 
     // A running calendar takes the files and the day, and this process ends.
     dbus::Connection* bus = application.sessionBus();
-    if (bus && !bus->requestName("com.cutefish.Calendar")) {
-        dbus::Proxy existing(bus, "com.cutefish.Calendar", "/Calendar", "com.cutefish.Calendar");
+    if (bus && !bus->requestName("org.cutefish.Calendar")) {
+        dbus::Proxy existing(bus, "org.cutefish.Calendar", "/Calendar", "org.cutefish.Calendar");
         existing.setTimeout(std::chrono::seconds(5));
         existing.call("open", files, date);
         return 0;
@@ -64,7 +64,7 @@ int main(int argc, char** argv)
     CalendarModel model(&store);
     std::unique_ptr<dbus::Object> object;
     if (bus) {
-        object = std::make_unique<dbus::Object>(bus, "/Calendar", "com.cutefish.Calendar");
+        object = std::make_unique<dbus::Object>(bus, "/Calendar", "org.cutefish.Calendar");
         object->addMethod("activateWindow", [&model] { model.activateWindow(); });
         object->addMethod("open", [&model](const std::vector<std::string>& files, const std::string& date) {
             model.open(files, date);
