@@ -45,8 +45,10 @@ static std::vector<std::string> times()
 int EventDialog::parseTime(const std::string& text, int fallback)
 {
     // Typed times: "9", "930", "9:30", "21:30", "9:30 pm", "9pm"; the
-    // morning and afternoon words of Chinese too.
-    static const std::regex pattern("^(\\d{1,2})(?:[:.h]?(\\d{2}))?\\s*(a|p|am|pm|\u4e0a\u5348|\u4e0b\u5348)?$");
+    // morning and afternoon words of Chinese too. Seconds, which the C
+    // locale's times carry, are dropped.
+    static const std::regex pattern(
+        "^(\\d{1,2})(?:[:.h]?(\\d{2})(?::\\d{2})?)?\\s*(a|p|am|pm|\u4e0a\u5348|\u4e0b\u5348)?$");
     // Time formats put a narrow or no-break space before am and pm.
     std::string lower = text;
     for (const std::string space : {"\u202f", "\u00a0", "\u2009"}) {

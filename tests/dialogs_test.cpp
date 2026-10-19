@@ -634,6 +634,7 @@ TEST(EventDialogTimesTest, EveryListedTimeReadsBack)
         EXPECT_EQ(EventDialog::parseTime(LocaleData::timeText(Time(minute / 60, minute % 60)), -1), minute);
     EXPECT_EQ(EventDialog::parseTime("8:00\u202fam", -1), 8 * 60);
     EXPECT_EQ(EventDialog::parseTime("8:30\u00a0PM", -1), 20 * 60 + 30);
+    EXPECT_EQ(EventDialog::parseTime("20:30:00", -1), 20 * 60 + 30);
 }
 
 static void save(Window* window, double scale, const std::string& file)
