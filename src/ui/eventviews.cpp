@@ -6,6 +6,7 @@
 #include "style.h"
 #include "timegridview.h"
 
+#include <base/i18n.h>
 #include <ui/label.h>
 #include <ui/painter.h>
 
@@ -13,10 +14,13 @@
 #include <cmath>
 
 using namespace cutefish::ui;
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
+using cutefish::i18n::trn;
 
 static std::string titleOf(const EventItem& item)
 {
-    return item.title.empty() ? std::string("New Event") : item.title;
+    return item.title.empty() ? std::string(tr("New Event")) : item.title;
 }
 
 EventPointer::EventPointer(CalendarWindow* window, View* view)
@@ -166,7 +170,8 @@ void EventLine::pointerRelease(const PointerEvent& event)
 }
 
 MoreLabel::MoreLabel(CalendarWindow* window, MoreItem item)
-    : Label(std::to_string(item.count) + " more")
+    // TRANSLATORS: the events of a day that do not fit in it, as in "3 more".
+    : Label(trn("{n} more", "{n} more", item.count))
     , m_window(window)
     , m_item(item)
 {
@@ -258,8 +263,11 @@ EventBlock::EventBlock(CalendarWindow* window, TimeGridView* grid, EventItem ite
     View* column = addChild<View>();
     column->setClipsChildren(true);
     m_title = column->addChild<Label>();
-    m_time = column->addChild<Label>(m_item.continuesBefore ? "until " + m_item.endText
-                                                            : m_item.startText + " – " + m_item.endText);
+    // TRANSLATORS: an event that began on an earlier day, such as "until 10:00".
+    const std::string time = m_item.continuesBefore ? format(tr("until {time}"), {{"time", m_item.endText}})
+                                                    : format(tr("{start} – {end}"),
+                                                             {{"start", m_item.startText}, {"end", m_item.endText}});
+    m_time = column->addChild<Label>(time);
     m_location = column->addChild<Label>(m_item.location);
     for (Label* label : {m_title, m_time, m_location})
         label->setFontSize(Style::points(8));

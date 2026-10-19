@@ -65,8 +65,12 @@ add_executable(cutefish-calendar-reminders
 target_link_libraries(cutefish-calendar-reminders PRIVATE calendar-core)
 
 install(TARGETS cutefish-calendar cutefish-calendar-reminders RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES cutefish-calendar.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-install(FILES cutefish-calendar-reminders.desktop DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/xdg/autostart)
+
+cutefish_add_translations(cutefish-calendar SOURCES src
+                          DESKTOP_FILES cutefish-calendar.desktop cutefish-calendar-reminders.desktop)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cutefish-calendar.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cutefish-calendar-reminders.desktop
+        DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/xdg/autostart)
 
 if(BUILD_TESTING)
     find_package(GTest REQUIRED)

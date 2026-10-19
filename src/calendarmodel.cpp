@@ -8,9 +8,12 @@
 #include "userdirs.h"
 
 #include <base/file.h>
+#include <base/i18n.h>
 #include <base/paths.h>
 
 #include <algorithm>
+
+using cutefish::i18n::tr;
 
 static const size_t UndoDepth = 20;
 // How far ahead search looks for a repeating event's next occurrence, in days.
@@ -156,7 +159,7 @@ CalendarModel::CalendarModel(CalendarStore* store, std::string settingsPath)
 void CalendarModel::ensureCalendar()
 {
     if (writableCalendars().empty())
-        m_store->createCalendar("Personal", Rgb{0x33, 0x85, 0xff});
+        m_store->createCalendar(tr("Personal"), Rgb{0x33, 0x85, 0xff});
 }
 
 std::vector<CalendarItem> CalendarModel::calendars() const
@@ -458,7 +461,7 @@ bool CalendarModel::saveEvent(const EventForm& form, int scope)
         if (added.empty())
             return false;
         setDefaultCalendar(calendarId);
-        pushUndo("Undo New Event", {{added, nullptr, added}});
+        pushUndo(tr("Undo New Event"), {{added, nullptr, added}});
         return true;
     }
 
@@ -495,7 +498,7 @@ bool CalendarModel::saveEvent(const EventForm& form, int scope)
     if (CalendarStore::calendarOf(updated) != calendarId)
         updated = m_store->moveEvent(updated, calendarId);
     changes.insert(changes.begin(), {key, before, updated});
-    pushUndo("Undo Edit", std::move(changes));
+    pushUndo(tr("Undo Edit"), std::move(changes));
     return true;
 }
 
@@ -516,14 +519,14 @@ bool CalendarModel::removeEvent(const std::string& key, const std::string& recur
         if (left) {
             if (m_store->updateEvent(key, std::move(changed)).empty())
                 return false;
-            pushUndo("Undo Delete", {{key, before, key}});
+            pushUndo(tr("Undo Delete"), {{key, before, key}});
             return true;
         }
     }
 
     if (!m_store->removeEvent(key))
         return false;
-    pushUndo("Undo Delete", {{key, before, std::string()}});
+    pushUndo(tr("Undo Delete"), {{key, before, std::string()}});
     return true;
 }
 
@@ -552,7 +555,7 @@ bool CalendarModel::moveOccurrence(const std::string& key, const std::string& re
     if (!saveEvent(form, scope))
         return false;
     if (!m_undo.empty())
-        m_undo.back().text = "Undo Move";
+        m_undo.back().text = tr("Undo Move");
     undoChanged.emit();
     return true;
 }

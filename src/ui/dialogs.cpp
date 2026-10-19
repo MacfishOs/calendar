@@ -9,6 +9,7 @@
 #include "text.h"
 
 #include <base/event_loop.h>
+#include <base/i18n.h>
 #include <ui/application.h>
 #include <ui/cell_layout.h>
 #include <ui/color_provider.h>
@@ -31,6 +32,8 @@
 #include <cmath>
 
 using namespace cutefish::ui;
+using cutefish::i18n::tr;
+using cutefish::i18n::trn;
 
 static constexpr double TitleSize = 14;
 
@@ -165,7 +168,7 @@ ScopeDialog::ScopeDialog(Window* parent, const Question& question)
         addText(question.text);
 
     RowLayout* actions = addActions(column());
-    DialogButton* cancel = actions->addChild<DialogButton>("Cancel");
+    DialogButton* cancel = actions->addChild<DialogButton>(tr("Cancel"));
     cancel->onClicked = [this] { close(); };
     if (!question.seriesOnly) {
         DialogButton* only = actions->addChild<DialogButton>(question.thisText);
@@ -249,12 +252,12 @@ static const std::vector<Rgb>& calendarColors()
 }
 
 CalendarDialog::CalendarDialog(Window* parent, CalendarModel* model, std::optional<CalendarItem> calendar)
-    : SmallDialog(parent, calendar ? "Edit Calendar" : "New Calendar", 360)
+    : SmallDialog(parent, calendar ? tr("Edit Calendar") : tr("New Calendar"), 360)
     , m_model(model)
     , m_id(calendar ? calendar->id : std::string())
     , m_color(calendar ? calendar->color : rgbOf(accent::blue))
 {
-    Label* title = column()->addChild<Label>(calendar ? "Edit Calendar" : "New Calendar");
+    Label* title = column()->addChild<Label>(calendar ? tr("Edit Calendar") : tr("New Calendar"));
     title->setFontSize(TitleSize);
     title->setWeight(600);
     title->setLayoutHints({.fillWidth = true, .margins = {0, 0, 32, 0}});
@@ -262,7 +265,7 @@ CalendarDialog::CalendarDialog(Window* parent, CalendarModel* model, std::option
 
     m_name = column()->addChild<TextField>(calendar ? calendar->name : std::string());
     m_name->setName("calendarName");
-    m_name->setPlaceholder("Name");
+    m_name->setPlaceholder(tr("Name"));
     m_name->setLayoutHints({.fillWidth = true});
     m_name->onAccepted = [this] { accept(); };
 
@@ -278,8 +281,8 @@ CalendarDialog::CalendarDialog(Window* parent, CalendarModel* model, std::option
     updateSwatches();
 
     RowLayout* actions = addActions(column());
-    actions->addChild<DialogButton>("Cancel")->onClicked = [this] { close(); };
-    m_save = actions->addChild<DialogButton>(calendar ? "Save" : "Create", true);
+    actions->addChild<DialogButton>(tr("Cancel"))->onClicked = [this] { close(); };
+    m_save = actions->addChild<DialogButton>(calendar ? tr("Save") : tr("Create"), true);
     m_save->setName("calendarSave");
     m_save->onClicked = [this] { accept(); };
     const auto updateSave = [this] { m_save->setEnabled(!trimmed(m_name->text()).empty()); };
@@ -327,7 +330,7 @@ class SubscriptionDialog::HolidayToggle : public View
 public:
     explicit HolidayToggle(std::function<void()> toggled)
         : m_toggled(std::move(toggled))
-        , m_label(addChild<Label>("Public Holidays"))
+        , m_label(addChild<Label>(tr("Public Holidays")))
         , m_chevron(addChild<Icon>("chevron-right", 16))
     {
         setName("holidaysToggle");
@@ -512,17 +515,18 @@ private:
 }
 
 SubscriptionDialog::SubscriptionDialog(Window* parent, CalendarModel* model)
-    : SmallDialog(parent, "New Subscription", 380)
+    : SmallDialog(parent, tr("New Subscription"), 380)
     , m_model(model)
     , m_color(unusedColor(model))
     , m_feeds(HolidayFeeds::list())
 {
-    addTitle("New Subscription")->setName("dialogTitle");
-    addText("A calendar published on the web, such as public holidays. It is kept up to date and cannot be edited.");
+    addTitle(tr("New Subscription"))->setName("dialogTitle");
+    addText(tr("A calendar published on the web, such as public holidays. It is kept up to date and cannot be "
+               "edited."));
 
     m_url = column()->addChild<TextField>();
     m_url->setName("subscriptionUrl");
-    m_url->setPlaceholder("webcal:// or https:// address");
+    m_url->setPlaceholder(tr("webcal:// or https:// address"));
     m_url->setLayoutHints({.fillWidth = true});
     m_url->onAccepted = [this] { accept(); };
     m_url->onTextChanged = [this] {
@@ -566,8 +570,8 @@ SubscriptionDialog::SubscriptionDialog(Window* parent, CalendarModel* model)
     updateSwatches();
 
     RowLayout* actions = addActions(column());
-    actions->addChild<DialogButton>("Cancel")->onClicked = [this] { close(); };
-    m_subscribe = actions->addChild<DialogButton>("Subscribe", true);
+    actions->addChild<DialogButton>(tr("Cancel"))->onClicked = [this] { close(); };
+    m_subscribe = actions->addChild<DialogButton>(tr("Subscribe"), true);
     m_subscribe->setName("subscribeButton");
     m_subscribe->onClicked = [this] { accept(); };
     update();
@@ -614,7 +618,7 @@ void SubscriptionDialog::update()
         m_holidayRows[i]->setEnabled(!isBusy());
     }
     m_url->setEnabled(!isBusy());
-    m_subscribe->setText(isBusy() ? "Subscribing…" : "Subscribe");
+    m_subscribe->setText(isBusy() ? tr("Subscribing…") : tr("Subscribe"));
     m_subscribe->setEnabled(!isBusy() && !trimmed(m_url->text()).empty());
 }
 
@@ -632,7 +636,7 @@ void SubscriptionDialog::accept()
     };
     // Checked here, as subscribe() would answer before returning.
     if (Subscriptions::normalizedUrl(m_url->text()).empty()) {
-        showError("This is not a web address.");
+        showError(tr("This is not a web address."));
         return;
     }
     m_error->setVisible(false);
@@ -667,13 +671,13 @@ static std::string fileNameOf(const std::string& file)
 }
 
 ImportDialog::ImportDialog(Window* parent, CalendarModel* model, std::vector<std::string> files)
-    : SmallDialog(parent, "Import Events", 380)
+    : SmallDialog(parent, tr("Import Events"), 380)
     , m_model(model)
     , m_files(std::move(files))
 {
-    addTitle("Import Events");
+    addTitle(tr("Import Events"));
     Label* text = addText(m_files.size() == 1 ? fileNameOf(m_files.front())
-                                              : std::to_string(m_files.size()) + " files");
+                                              : trn("{n} file", "{n} files", m_files.size()));
     text->setWrap(false);
     text->setFixedLineHeight(0);
     text->setElide(Label::Elide::Middle);
@@ -681,7 +685,7 @@ ImportDialog::ImportDialog(Window* parent, CalendarModel* model, std::vector<std
     RowLayout* target = column()->addChild<RowLayout>();
     target->setSpacing(12);
     target->setLayoutHints({.fillWidth = true});
-    target->addChild<Label>("Add to");
+    target->addChild<Label>(tr("Add to"));
     std::vector<std::string> names;
     int current = 0;
     const std::vector<CalendarItem> calendars = model->writableCalendars();
@@ -696,8 +700,8 @@ ImportDialog::ImportDialog(Window* parent, CalendarModel* model, std::vector<std
     m_calendar->setLayoutHints({.fillWidth = true});
 
     RowLayout* actions = addActions(column());
-    actions->addChild<DialogButton>("Cancel")->onClicked = [this] { close(); };
-    DialogButton* import = actions->addChild<DialogButton>("Import", true);
+    actions->addChild<DialogButton>(tr("Cancel"))->onClicked = [this] { close(); };
+    DialogButton* import = actions->addChild<DialogButton>(tr("Import"), true);
     import->setName("importButton");
     import->onClicked = [this] { accept(); };
     window()->addShortcut(NoModifier, key::Return, [this] { accept(); });
@@ -811,7 +815,7 @@ void FormCard::paint(Painter& painter)
 }
 
 SettingsDialog::SettingsDialog(Window* parent, CalendarModel* model)
-    : m_dialog(std::make_unique<DialogWindow>(parent, "Settings", 420))
+    : m_dialog(std::make_unique<DialogWindow>(parent, tr("Settings"), 420))
 {
     auto content = std::make_unique<ColumnLayout>();
     content->setSpacing(Theme::current().largeSpacing);
@@ -822,15 +826,15 @@ SettingsDialog::SettingsDialog(Window* parent, CalendarModel* model)
     static const std::vector<int> weekStarts{0, 7, 1, 6};
     std::vector<std::string> names;
     for (int day : weekStarts)
-        names.push_back(day == 0 ? std::string("System Default") : LocaleData::dayName(day % 7));
-    ComboBox* weekStart = card->addRow("Week Starts On")->addChild<ComboBox>(names);
+        names.push_back(day == 0 ? std::string(tr("System Default")) : LocaleData::dayName(day % 7));
+    ComboBox* weekStart = card->addRow(tr("Week Starts On"))->addChild<ComboBox>(names);
     weekStart->setName("weekStartBox");
     weekStart->setLayoutHints({.preferredWidth = 180});
     weekStart->setCurrentIndex(std::max(0, int(std::find(weekStarts.begin(), weekStarts.end(), model->weekStart())
                                                - weekStarts.begin()) % int(weekStarts.size())));
     weekStart->onActivated = [model](int index) { model->setWeekStart(weekStarts[size_t(index)]); };
 
-    Switch* numbers = card->addRow("Show Week Numbers")->addChild<Switch>();
+    Switch* numbers = card->addRow(tr("Show Week Numbers"))->addChild<Switch>();
     numbers->setName("weekNumbersSwitch");
     numbers->setChecked(model->showWeekNumbers());
     numbers->onToggled = [model](bool checked) { model->setShowWeekNumbers(checked); };

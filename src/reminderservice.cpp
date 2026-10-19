@@ -5,6 +5,8 @@
 #include "calendarstore.h"
 #include "localedata.h"
 
+#include <base/i18n.h>
+
 #include <algorithm>
 
 #include <spawn.h>
@@ -14,6 +16,9 @@
 extern char** environ;
 
 namespace dbus = cutefish::base::dbus;
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
+using cutefish::i18n::trn;
 
 // A snoozed reminder comes back after this long.
 static const int SnoozeMinutes = 10;
@@ -51,20 +56,23 @@ static std::string timeText(const Occurrence& occurrence)
     const Date today = Date::currentDate();
     if (occurrence.allDay) {
         if (occurrence.firstDay == today)
-            return "Today, all day";
+            return tr("Today, all day");
         if (occurrence.firstDay == today.addDays(1))
-            return "Tomorrow, all day";
+            return tr("Tomorrow, all day");
         return LocaleData::longDate(occurrence.firstDay);
     }
 
     std::string range = LocaleData::timeText(occurrence.start.time());
     if (occurrence.end > occurrence.start)
-        range += " – " + LocaleData::timeText(occurrence.end.time());
+        // TRANSLATORS: a time range, such as "9:00 – 10:00".
+        range = format(tr("{start} – {end}"),
+                       {{"start", range}, {"end", LocaleData::timeText(occurrence.end.time())}});
     if (occurrence.start.date() == today)
         return range;
     if (occurrence.start.date() == today.addDays(1))
-        return "Tomorrow, " + range;
-    return LocaleData::longDate(occurrence.start.date()) + ", " + range;
+        return format(tr("Tomorrow, {time}"), {{"time", range}});
+    // TRANSLATORS: a reminder's date and time, such as "Wednesday, 7 October, 9:00 – 10:00".
+    return format(tr("{date}, {time}"), {{"date", LocaleData::longDate(occurrence.start.date())}, {"time", range}});
 }
 
 // Through the session's application runtime, or as a process of its own
@@ -168,7 +176,7 @@ void ReminderService::notify(const Reminder& reminder)
     if (!occurrence.location.empty())
         body += '\n' + occurrence.location;
     const std::vector<std::string> actions{"default", "", "snooze",
-                                           "Snooze " + std::to_string(SnoozeMinutes) + " Minutes"};
+                                           trn("Snooze {n} Minute", "Snooze {n} Minutes", SnoozeMinutes)};
     const dbus::VariantMap hints{
         {"urgency", dbus::Variant(uint8_t(1))},
         {"desktop-entry", dbus::Variant(std::string("cutefish-calendar"))},
@@ -182,7 +190,7 @@ void ReminderService::notify(const Reminder& reminder)
         if (const std::optional<uint32_t> id = reply.value<uint32_t>(0); id && *id != 0)
             m_shown[*id] = reminder;
     }, std::string(), uint32_t(0), std::string("office-calendar"),
-       occurrence.summary.empty() ? std::string("New Event") : occurrence.summary, escaped(body), actions, hints,
+       occurrence.summary.empty() ? std::string(tr("New Event")) : occurrence.summary, escaped(body), actions, hints,
        int32_t(0));
     m_pending.push_back({std::move(call), done});
 }

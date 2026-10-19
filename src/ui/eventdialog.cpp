@@ -8,6 +8,7 @@
 #include "style.h"
 #include "text.h"
 
+#include <base/i18n.h>
 #include <ui/cell_layout.h>
 #include <ui/combo_box.h>
 #include <ui/dialog_window.h>
@@ -25,6 +26,8 @@
 #include <regex>
 
 using namespace cutefish::ui;
+using cutefish::i18n::tr;
+using cutefish::i18n::trn;
 
 static std::string timeText(int minute)
 {
@@ -85,9 +88,9 @@ static TextField* plainField(FormCard* card, const std::string& text, const std:
 EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     : m_model(model)
     , m_event(std::move(event))
-    , m_dialog(std::make_unique<DialogWindow>(parent, m_event.key.empty() ? "New Event"
-                                                      : m_event.readOnly ? "Event"
-                                                                         : "Edit Event",
+    , m_dialog(std::make_unique<DialogWindow>(parent, m_event.key.empty() ? tr("New Event")
+                                                      : m_event.readOnly ? tr("Event")
+                                                                         : tr("Edit Event"),
                                               480))
 {
     m_allDay = m_event.allDay;
@@ -109,21 +112,21 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
 
     FormCard* names = content->addChild<FormCard>();
     names->setLayoutHints({.fillWidth = true});
-    m_title = plainField(names, m_event.title, "Title");
+    m_title = plainField(names, m_event.title, tr("Title"));
     m_title->setName("titleField");
     m_title->setFontSize(Style::points(11));
     m_title->setFontWeight(500);
     auto separator = std::make_unique<View>();
     separator->setName("separator");
     names->addWide(std::move(separator), 0);
-    m_location = plainField(names, m_event.location, "Location");
+    m_location = plainField(names, m_event.location, tr("Location"));
     m_location->setName("locationField");
     m_title->onAccepted = [this] { save(); };
     m_location->onAccepted = [this] { save(); };
 
     FormCard* timing = content->addChild<FormCard>();
     timing->setLayoutHints({.fillWidth = true});
-    m_allDaySwitch = timing->addRow("All Day")->addChild<Switch>();
+    m_allDaySwitch = timing->addRow(tr("All Day"))->addChild<Switch>();
     m_allDaySwitch->setName("allDaySwitch");
     m_allDaySwitch->setChecked(m_allDay);
     m_allDaySwitch->onToggled = [this](bool checked) {
@@ -132,7 +135,7 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
         update();
     };
 
-    View* starts = timing->addRow("Starts");
+    View* starts = timing->addRow(tr("Starts"));
     m_startDateButton = starts->addChild<DateButton>(model, m_startDate);
     m_startDateButton->setName("startDate");
     m_startDateButton->onPicked = [this](Date date) { setStart(date, m_startMinute); };
@@ -140,7 +143,7 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     m_startTime->setName("startTime");
     setUpTimeBox(m_startTime, [this] { return m_startMinute; }, [this](int minute) { setStart(m_startDate, minute); });
 
-    View* ends = timing->addRow("Ends");
+    View* ends = timing->addRow(tr("Ends"));
     m_endDateButton = ends->addChild<DateButton>(model, m_endDate);
     m_endDateButton->setName("endDate");
     m_endDateButton->onPicked = [this](Date date) {
@@ -155,20 +158,21 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     });
 
     // Up against the card above.
-    m_error = content->addChild<Label>("The event ends before it starts.");
+    m_error = content->addChild<Label>(tr("The event ends before it starts."));
     m_error->setFontSize(Style::points(8));
     m_error->setLayoutHints({.fillWidth = true, .margins = {14, -6, 0, 0}});
 
     m_repeatCard = content->addChild<FormCard>();
     m_repeatCard->setLayoutHints({.fillWidth = true});
     // Custom only for a rule made elsewhere.
-    std::vector<std::string> repeats{"Never", "Every Day", "Every Weekday", "Every Week", "Every Month", "Every Year"};
+    std::vector<std::string> repeats{tr("Never"), tr("Every Day"), tr("Every Weekday"), tr("Every Week"),
+                                     tr("Every Month"), tr("Every Year")};
     m_repeatValues = {0, 1, 2, 3, 4, 5};
     if (m_event.repeat == Repeat::Custom) {
-        repeats.push_back("Custom");
+        repeats.push_back(tr("Custom"));
         m_repeatValues.push_back(Repeat::Custom);
     }
-    m_repeatBox = m_repeatCard->addRow("Repeat")->addChild<ComboBox>(repeats);
+    m_repeatBox = m_repeatCard->addRow(tr("Repeat"))->addChild<ComboBox>(repeats);
     m_repeatBox->setName("repeatBox");
     m_repeatBox->setLayoutHints({.preferredWidth = 200});
     m_repeatBox->onActivated = [this](int index) {
@@ -176,8 +180,10 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
         update();
     };
 
-    m_repeatEndRow = m_repeatCard->addRow("End Repeat");
-    m_repeatEndBox = m_repeatEndRow->addChild<ComboBox>(std::vector<std::string>{"Never", "On Date", "After"});
+    m_repeatEndRow = m_repeatCard->addRow(tr("End Repeat"));
+    m_repeatEndBox = m_repeatEndRow->addChild<ComboBox>(std::vector<std::string>{tr("Never"), tr("On Date"),
+                                                                                 // TRANSLATORS: as in "After 3 times".
+                                                                                 tr("After")});
     m_repeatEndBox->setName("repeatEndBox");
     m_repeatEndBox->onActivated = [this](int index) {
         m_repeatEnd = index;
@@ -205,7 +211,7 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     };
     m_timesLabel = m_repeatEndRow->addChild<Label>();
 
-    m_alarmBox = m_repeatCard->addRow("Alert")->addChild<ComboBox>();
+    m_alarmBox = m_repeatCard->addRow(tr("Alert"))->addChild<ComboBox>();
     m_alarmBox->setName("alarmBox");
     m_alarmBox->setLayoutHints({.preferredWidth = 200});
     m_alarmBox->onActivated = [this](int index) {
@@ -221,7 +227,7 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
         if (items[i].id == m_event.calendarId)
             calendarIndex = int(i);
     }
-    m_calendarBox = m_repeatCard->addRow("Calendar")->addChild<ComboBox>(calendars);
+    m_calendarBox = m_repeatCard->addRow(tr("Calendar"))->addChild<ComboBox>(calendars);
     m_calendarBox->setName("calendarBox");
     m_calendarBox->setLayoutHints({.preferredWidth = 200});
     m_calendarBox->setCurrentIndex(calendarIndex);
@@ -231,7 +237,7 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     auto notesArea = std::make_unique<TextArea>(m_event.notes);
     m_notes = notesArea.get();
     m_notes->setName("notesField");
-    m_notes->setPlaceholder("Notes");
+    m_notes->setPlaceholder(tr("Notes"));
     m_notes->setWrapMode(TextArea::WrapMode::Wrap);
     m_notes->setFrameVisible(false);
     m_notes->setPadding({14, 12, 14, 12});
@@ -250,11 +256,11 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
                                                           m_untilButton, m_countField, m_alarmBox, m_calendarBox})
             control->setEnabled(false);
         actions->addChild<View>()->setLayoutHints({.fillWidth = true});
-        DialogButton* done = actions->addChild<DialogButton>("Close", true);
+        DialogButton* done = actions->addChild<DialogButton>(tr("Close"), true);
         done->setName("closeButton");
         done->onClicked = [this] { close(); };
     } else if (!isNew()) {
-        DialogButton* remove = actions->addChild<DialogButton>("Delete Event");
+        DialogButton* remove = actions->addChild<DialogButton>(tr("Delete Event"));
         remove->setName("deleteButton");
         remove->onClicked = [this] {
             if (onDeleteRequested)
@@ -263,8 +269,8 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     }
     if (!m_event.readOnly) {
         actions->addChild<View>()->setLayoutHints({.fillWidth = true});
-        actions->addChild<DialogButton>("Cancel")->onClicked = [this] { close(); };
-        m_saveButton = actions->addChild<DialogButton>(isNew() ? "Add" : "Save", true);
+        actions->addChild<DialogButton>(tr("Cancel"))->onClicked = [this] { close(); };
+        m_saveButton = actions->addChild<DialogButton>(isNew() ? tr("Add") : tr("Save"), true);
         m_saveButton->setName("saveButton");
         m_saveButton->onClicked = [this] { save(); };
     }
@@ -341,29 +347,29 @@ DateTime EventDialog::end() const
 // Alarm choices, in minutes from the start; all-day ones count from midnight.
 std::vector<EventDialog::Alarm> EventDialog::alarmChoices() const
 {
-    std::vector<Alarm> list{{"None", 0, 0}};
+    std::vector<Alarm> list{{tr("None"), 0, 0}};
     if (m_allDay) {
-        list.push_back({"On the Day (9:00)", 1, 9 * 60});
-        list.push_back({"1 Day Before (9:00)", 1, -15 * 60});
-        list.push_back({"2 Days Before (9:00)", 1, -(24 + 15) * 60});
-        list.push_back({"1 Week Before (9:00)", 1, -(6 * 24 + 15) * 60});
+        list.push_back({tr("On the Day (9:00)"), 1, 9 * 60});
+        list.push_back({trn("{n} Day Before (9:00)", "{n} Days Before (9:00)", 1), 1, -15 * 60});
+        list.push_back({trn("{n} Day Before (9:00)", "{n} Days Before (9:00)", 2), 1, -(24 + 15) * 60});
+        list.push_back({trn("{n} Week Before (9:00)", "{n} Weeks Before (9:00)", 1), 1, -(6 * 24 + 15) * 60});
     } else {
-        list.push_back({"At Time of Event", 1, 0});
-        list.push_back({"5 Minutes Before", 1, -5});
-        list.push_back({"10 Minutes Before", 1, -10});
-        list.push_back({"15 Minutes Before", 1, -15});
-        list.push_back({"30 Minutes Before", 1, -30});
-        list.push_back({"1 Hour Before", 1, -60});
-        list.push_back({"2 Hours Before", 1, -120});
-        list.push_back({"1 Day Before", 1, -24 * 60});
-        list.push_back({"2 Days Before", 1, -48 * 60});
-        list.push_back({"1 Week Before", 1, -7 * 24 * 60});
+        list.push_back({tr("At Time of Event"), 1, 0});
+        list.push_back({trn("{n} Minute Before", "{n} Minutes Before", 5), 1, -5});
+        list.push_back({trn("{n} Minute Before", "{n} Minutes Before", 10), 1, -10});
+        list.push_back({trn("{n} Minute Before", "{n} Minutes Before", 15), 1, -15});
+        list.push_back({trn("{n} Minute Before", "{n} Minutes Before", 30), 1, -30});
+        list.push_back({trn("{n} Hour Before", "{n} Hours Before", 1), 1, -60});
+        list.push_back({trn("{n} Hour Before", "{n} Hours Before", 2), 1, -120});
+        list.push_back({trn("{n} Day Before", "{n} Days Before", 1), 1, -24 * 60});
+        list.push_back({trn("{n} Day Before", "{n} Days Before", 2), 1, -48 * 60});
+        list.push_back({trn("{n} Week Before", "{n} Weeks Before", 1), 1, -7 * 24 * 60});
     }
     const bool kept = std::any_of(list.begin(), list.end(), [this](const Alarm& choice) {
         return choice.alarm == m_event.alarm && choice.offset == m_event.alarmOffset;
     });
     if (m_event.alarm == 2 || (m_event.alarm == 1 && m_event.allDay == m_allDay && !kept))
-        list.push_back({"Custom", m_event.alarm, m_event.alarmOffset});
+        list.push_back({tr("Custom"), m_event.alarm, m_event.alarmOffset});
     return list;
 }
 
@@ -419,7 +425,8 @@ void EventDialog::update()
     m_untilButton->setDate(m_repeatUntil);
     m_countField->setVisible(m_repeatEnd == 2);
     m_timesLabel->setVisible(m_repeatEnd == 2);
-    m_timesLabel->setText(m_repeatCount == 1 ? "time" : "times");
+    // TRANSLATORS: after "After" and a number field, as in "After 3 times".
+    m_timesLabel->setText(trn("time", "times", m_repeatCount));
 
     std::vector<std::string> alarms;
     for (const Alarm& choice : alarmChoices())

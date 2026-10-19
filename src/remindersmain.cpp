@@ -6,9 +6,14 @@
 
 #include <base/dbus.h>
 #include <base/event_loop.h>
+#include <base/i18n.h>
+
+#include <clocale>
 
 int main()
 {
+    std::setlocale(LC_ALL, "");
+    cutefish::i18n::setDomain("cutefish-calendar");
     cutefish::base::EventLoop loop;
     cutefish::base::dbus::Connection* bus = cutefish::base::dbus::Connection::session(&loop);
     if (!bus || !bus->requestName("org.cutefish.CalendarReminders"))

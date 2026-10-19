@@ -8,6 +8,7 @@
 
 #include <base/command_line.h>
 #include <base/dbus.h>
+#include <base/i18n.h>
 #include <base/url.h>
 #include <ui/application.h>
 
@@ -48,6 +49,7 @@ int main(int argc, char** argv)
 
     cutefish::ui::Application application(argc, argv);
     application.setApplicationId("cutefish-calendar");
+    cutefish::i18n::setDomain("cutefish-calendar");
 
     // A running calendar takes the files and the day, and this process ends.
     dbus::Connection* bus = application.sessionBus();

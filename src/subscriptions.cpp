@@ -5,9 +5,14 @@
 #include "eventfile.h"
 #include "text.h"
 
+#include <base/i18n.h>
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
 
 // How often due calendars are looked for.
 static const auto CheckInterval = std::chrono::minutes(15);
@@ -93,17 +98,18 @@ Subscriptions::Result Subscriptions::fetchFeed(const Fetch& fetch, const std::st
     if (answer.notModified())
         return result;
     if (answer.status == 0) {
-        result.error = "The calendar could not be reached.";
+        result.error = tr("The calendar could not be reached.");
         return result;
     }
     if (!answer.succeeded()) {
-        result.error = "The server answered with error " + std::to_string(answer.status) + ".";
+        result.error = format(tr("The server answered with error {status}."),
+                              {{"status", std::to_string(answer.status)}});
         return result;
     }
     result.files = EventFile::split(answer.body);
     // A calendar without events is still a calendar.
     if (result.files.empty() && !containsIgnoringCase(answer.body, "BEGIN:VCALENDAR")) {
-        result.error = "There is no calendar at this address.";
+        result.error = tr("There is no calendar at this address.");
         return result;
     }
     result.info = EventFile::feedInfo(answer.body);
@@ -118,7 +124,7 @@ int Subscriptions::subscribe(const std::string& url, Rgb color, Subscribed done)
     const std::string address = normalizedUrl(url);
     if (address.empty()) {
         if (done)
-            done({}, "This is not a web address.");
+            done({}, tr("This is not a web address."));
         return number;
     }
 
@@ -129,7 +135,7 @@ int Subscriptions::subscribe(const std::string& url, Rgb color, Subscribed done)
             if (!result.error.empty() || result.download.notModified()) {
                 finished();
                 if (done)
-                    done({}, result.error.empty() ? std::string("The calendar could not be read.") : result.error);
+                    done({}, result.error.empty() ? std::string(tr("The calendar could not be read.")) : result.error);
                 return;
             }
 
@@ -145,7 +151,7 @@ int Subscriptions::subscribe(const std::string& url, Rgb color, Subscribed done)
                 m_store->replaceEvents(id, std::move(result.files));
             finished();
             if (done)
-                done(id, id.empty() ? std::string("The calendar could not be saved.") : std::string());
+                done(id, id.empty() ? std::string(tr("The calendar could not be saved.")) : std::string());
         });
     return number;
 }
@@ -160,7 +166,7 @@ void Subscriptions::refresh(const std::string& id, Refreshed done)
     const FeedState state = m_store->feedState(id);
     if (state.url.empty()) {
         if (done)
-            done("This calendar is not a subscription.");
+            done(tr("This calendar is not a subscription."));
         return;
     }
     if (isRefreshing(id)) {

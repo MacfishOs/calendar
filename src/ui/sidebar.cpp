@@ -9,6 +9,7 @@
 #include "style.h"
 
 #include <base/event_loop.h>
+#include <base/i18n.h>
 #include <ui/cell_layout.h>
 #include <ui/icon.h>
 #include <ui/label.h>
@@ -19,6 +20,7 @@
 #include <cmath>
 
 using namespace cutefish::ui;
+using cutefish::i18n::tr;
 
 // A rounded card in the calendar's second background colour.
 class Sidebar::Card : public View
@@ -198,7 +200,7 @@ Sidebar::Sidebar(CalendarWindow* window)
     m_miniMonth->onDayClicked = [window](Date date) { window->setCurrentDate(date); };
     m_miniMonth->onDayDoubleClicked = [window](Date date) { window->showDay(date); };
 
-    RowLayout* heading = addHeading("Calendars", "addCalendar");
+    RowLayout* heading = addHeading(tr("Calendars"), "addCalendar");
     heading->children()[0]->setName("calendarsHeading");
     static_cast<RoundImageButton*>(heading->children()[1].get())->onClicked = [window] { window->newCalendar(); };
 
@@ -208,7 +210,7 @@ Sidebar::Sidebar(CalendarWindow* window)
     m_calendarList->addChild<Column>();
 
     // Shown once there is a subscription; the main menu adds the first.
-    m_subscriptionHeading = addHeading("Subscriptions", "addSubscription");
+    m_subscriptionHeading = addHeading(tr("Subscriptions"), "addSubscription");
     m_subscriptionHeading->children()[0]->setName("subscriptionsHeading");
     static_cast<RoundImageButton*>(m_subscriptionHeading->children()[1].get())->onClicked = [window] {
         window->newSubscription();

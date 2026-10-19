@@ -8,6 +8,7 @@
 #include "localedata.h"
 #include "style.h"
 
+#include <base/i18n.h>
 #include <ui/label.h>
 #include <ui/painter.h>
 #include <ui/scroll_view.h>
@@ -16,6 +17,8 @@
 #include <cmath>
 
 using namespace cutefish::ui;
+using cutefish::i18n::format;
+using cutefish::i18n::tr;
 
 static constexpr double GridTop = 6;
 
@@ -222,7 +225,9 @@ protected:
         if (m_creating) {
             m_preview->setGeometry({Gutter + m_column * columnWidth + 2, GridTop + fromMinute() / 60.0 * HourHeight,
                                     columnWidth - 4, (toMinute() - fromMinute()) / 60.0 * HourHeight});
-            m_previewLabel->setText(minuteText(fromMinute()) + " – " + minuteText(toMinute()));
+            // TRANSLATORS: a time range, such as "9:00 – 10:00".
+            m_previewLabel->setText(format(tr("{start} – {end}"),
+                                           {{"start", minuteText(fromMinute())}, {"end", minuteText(toMinute())}}));
             m_previewLabel->setColor(theme.text);
             const SizeF size = m_previewLabel->sizeHint();
             m_previewLabel->setGeometry({6, 3, size.width, size.height});
@@ -349,7 +354,8 @@ TimeGridView::TimeGridView(CalendarWindow* window, int days)
         for (int i = 0; i < days; ++i)
             m_headers.push_back(addChild<Header>(window, false));
     }
-    m_allDayLabel = addChild<Label>("all-day");
+    // TRANSLATORS: the label of the all-day row in the day and week views, in a narrow column beside it.
+    m_allDayLabel = addChild<Label>(tr("all-day"));
     m_allDayLabel->setFontSize(Style::points(8));
     m_allDayLabel->setTextAlignment(Label::TextAlignment::Right);
     m_allDayLabel->setVerticallyCentered(true);

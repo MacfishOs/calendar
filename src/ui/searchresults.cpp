@@ -7,6 +7,7 @@
 #include "localedata.h"
 #include "style.h"
 
+#include <base/i18n.h>
 #include <ui/label.h>
 #include <ui/layout.h>
 #include <ui/painter.h>
@@ -15,6 +16,7 @@
 #include <cmath>
 
 using namespace cutefish::ui;
+using cutefish::i18n::tr;
 
 namespace {
 
@@ -51,8 +53,8 @@ public:
     ResultRow(CalendarWindow* window, EventItem event)
         : m_window(window)
         , m_event(std::move(event))
-        , m_title(addChild<Label>(m_event.title.empty() ? std::string("New Event") : m_event.title))
-        , m_time(addChild<Label>(m_event.allDay ? std::string("All day") : m_event.startText))
+        , m_title(addChild<Label>(m_event.title.empty() ? std::string(tr("New Event")) : m_event.title))
+        , m_time(addChild<Label>(m_event.allDay ? std::string(tr("All day")) : m_event.startText))
         , m_location(addChild<Label>(m_event.location))
     {
         m_time->setFontSize(Style::points(8));
@@ -145,16 +147,16 @@ private:
 static std::string headingText(Date date, Date today)
 {
     if (date == today)
-        return "Today";
+        return tr("Today");
     if (date == today.addDays(1))
-        return "Tomorrow";
+        return tr("Tomorrow");
     return LocaleData::longDate(date);
 }
 
 SearchResults::SearchResults(CalendarWindow* window)
     : m_window(window)
     , m_scroll(addChild<ScrollView>())
-    , m_empty(addChild<Label>("No Events Found"))
+    , m_empty(addChild<Label>(tr("No Events Found")))
 {
     setName("searchResults");
     m_list = m_scroll->setContent<Column>();

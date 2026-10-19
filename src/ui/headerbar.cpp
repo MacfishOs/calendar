@@ -5,6 +5,7 @@
 #include "calendarwindow.h"
 #include "style.h"
 
+#include <base/i18n.h>
 #include <ui/header_button.h>
 #include <ui/icon.h>
 #include <ui/label.h>
@@ -17,6 +18,7 @@
 #include <cmath>
 
 using namespace cutefish::ui;
+using cutefish::i18n::tr;
 
 static constexpr double ButtonSize = 32;
 static const std::vector<std::string> Views{"day", "week", "month", "year"};
@@ -89,10 +91,10 @@ void NavigationButton::pointerRelease(const PointerEvent& event)
 
 HeaderBar::HeaderBar(CalendarWindow* window)
     : m_window(window)
-    , m_title(addChild<Label>("Calendar"))
+    , m_title(addChild<Label>(tr("Calendar")))
     , m_sidebarButton(addChild<HeaderButton>(std::string(), ButtonSize))
-    , m_viewSwitch(addChild<SegmentedControl>(std::vector<std::string>{"Day", "Week", "Month", "Year"}))
-    , m_search(addChild<SearchField>("Search events"))
+    , m_viewSwitch(addChild<SegmentedControl>(std::vector<std::string>{tr("Day"), tr("Week"), tr("Month"), tr("Year")}))
+    , m_search(addChild<SearchField>(tr("Search events")))
     , m_menuButton(addChild<HeaderButton>("menu", ButtonSize))
 {
     m_title->setName("applicationTitle");
@@ -176,7 +178,7 @@ NavigationRow::NavigationRow(CalendarWindow* window)
     : m_window(window)
     , m_title(addChild<Label>())
     , m_previous(addChild<NavigationButton>("chevron-left"))
-    , m_today(addChild<NavigationButton>(std::string(), "Today"))
+    , m_today(addChild<NavigationButton>(std::string(), tr("Today")))
     , m_next(addChild<NavigationButton>("chevron-right"))
 {
     m_title->setName("periodTitle");
