@@ -85,13 +85,15 @@ static TextField* plainField(FormCard* card, const std::string& text, const std:
     return pointer;
 }
 
+static std::string dialogTitle(const EventForm& event)
+{
+    return event.key.empty() ? tr("New Event") : event.readOnly ? tr("Event") : tr("Edit Event");
+}
+
 EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     : m_model(model)
     , m_event(std::move(event))
-    , m_dialog(std::make_unique<DialogWindow>(parent, m_event.key.empty() ? tr("New Event")
-                                                      : m_event.readOnly ? tr("Event")
-                                                                         : tr("Edit Event"),
-                                              480))
+    , m_dialog(std::make_unique<DialogWindow>(parent, dialogTitle(m_event), 480))
 {
     m_allDay = m_event.allDay;
     m_startDate = m_event.start.date();
@@ -103,7 +105,30 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     m_repeatUntil = m_event.repeatUntil;
     m_repeatCount = m_event.repeatCount;
     m_alarmIndex = alarmIndexFor(m_event.alarm, m_event.alarmOffset);
+    buildContent();
 
+    // Escape puts away an open date picker first.
+    m_dialog->window()->addShortcut(NoModifier, key::Escape, [this] {
+        for (DateButton* button : {m_startDateButton, m_endDateButton, m_untilButton}) {
+            if (button->isPopupOpen()) {
+                button->dismiss();
+                return;
+            }
+        }
+        close();
+    });
+    m_dialog->window()->addShortcut(ControlModifier, key::Return, [this] { save(); });
+    m_dialog->window()->addShortcut(ControlModifier, key::KeypadEnter, [this] { save(); });
+    m_dialog->onClosed = [this] {
+        if (onClosed)
+            onClosed();
+    };
+}
+
+EventDialog::~EventDialog() = default;
+
+void EventDialog::buildContent()
+{
     // Layouts, which round sizes up and positions to whole pixels.
     auto content = std::make_unique<ColumnLayout>();
     content->setName("eventDialog");
@@ -136,7 +161,7 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     };
 
     View* starts = timing->addRow(tr("Starts"));
-    m_startDateButton = starts->addChild<DateButton>(model, m_startDate);
+    m_startDateButton = starts->addChild<DateButton>(m_model, m_startDate);
     m_startDateButton->setName("startDate");
     m_startDateButton->onPicked = [this](Date date) { setStart(date, m_startMinute); };
     m_startTime = starts->addChild<ComboBox>(times());
@@ -144,7 +169,7 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     setUpTimeBox(m_startTime, [this] { return m_startMinute; }, [this](int minute) { setStart(m_startDate, minute); });
 
     View* ends = timing->addRow(tr("Ends"));
-    m_endDateButton = ends->addChild<DateButton>(model, m_endDate);
+    m_endDateButton = ends->addChild<DateButton>(m_model, m_endDate);
     m_endDateButton->setName("endDate");
     m_endDateButton->onPicked = [this](Date date) {
         m_endDate = date;
@@ -189,7 +214,7 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
         m_repeatEnd = index;
         update();
     };
-    m_untilButton = m_repeatEndRow->addChild<DateButton>(model, m_repeatUntil);
+    m_untilButton = m_repeatEndRow->addChild<DateButton>(m_model, m_repeatUntil);
     m_untilButton->onPicked = [this](Date date) {
         m_repeatUntil = date;
         update();
@@ -221,7 +246,7 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
 
     std::vector<std::string> calendars;
     int calendarIndex = 0;
-    const std::vector<CalendarItem> items = m_event.readOnly ? model->calendars() : model->writableCalendars();
+    const std::vector<CalendarItem> items = m_event.readOnly ? m_model->calendars() : m_model->writableCalendars();
     for (size_t i = 0; i < items.size(); ++i) {
         calendars.push_back(items[i].name);
         if (items[i].id == m_event.calendarId)
@@ -276,26 +301,39 @@ EventDialog::EventDialog(Window* parent, CalendarModel* model, EventForm event)
     }
 
     m_dialog->setContentView(std::move(content));
-    // Escape puts away an open date picker first.
-    m_dialog->window()->addShortcut(NoModifier, key::Escape, [this] {
-        for (DateButton* button : {m_startDateButton, m_endDateButton, m_untilButton}) {
-            if (button->isPopupOpen()) {
-                button->dismiss();
-                return;
-            }
-        }
-        close();
-    });
-    m_dialog->window()->addShortcut(ControlModifier, key::Return, [this] { save(); });
-    m_dialog->window()->addShortcut(ControlModifier, key::KeypadEnter, [this] { save(); });
-    m_dialog->onClosed = [this] {
-        if (onClosed)
-            onClosed();
-    };
     update();
 }
 
-EventDialog::~EventDialog() = default;
+void EventDialog::retranslate()
+{
+    // Times being typed are read first, as leaving their boxes would.
+    for (ComboBox* box : {m_startTime, m_endTime}) {
+        if (box->onAccepted)
+            box->onAccepted();
+    }
+    const std::string title = m_title->text();
+    const std::string location = m_location->text();
+    const std::string notes = m_notes->text();
+    const std::string count = m_countField->text();
+    const int calendar = m_calendarBox->currentIndex();
+    const auto fields = [this] { return std::vector<View*>{m_title, m_location, m_notes, m_countField}; };
+    const std::vector<View*> before = fields();
+    const size_t focused = size_t(std::find_if(before.begin(), before.end(), [](View* field) {
+                                      return field->hasFocus();
+                                  }) - before.begin());
+
+    m_dialog->setTitle(dialogTitle(m_event));
+    m_shownStartMinute = -1;
+    m_shownEndMinute = -1;
+    buildContent();
+    m_title->setText(title);
+    m_location->setText(location);
+    m_notes->setText(notes);
+    m_countField->setText(count);
+    m_calendarBox->setCurrentIndex(calendar);
+    if (focused < before.size())
+        fields()[focused]->setFocus();
+}
 
 // Typing replaces the text; it shows the time again once read.
 void EventDialog::setUpTimeBox(ComboBox* box, std::function<int()> minute, std::function<void(int)> changed)

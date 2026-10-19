@@ -28,6 +28,9 @@ public:
     explicit Sidebar(CalendarWindow* window);
     ~Sidebar() override;
 
+    Date shownMonth() const { return m_shownMonth; }
+    void setShownMonth(Date month);
+
 protected:
     void layout() override;
 

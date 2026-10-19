@@ -40,6 +40,9 @@ public:
     void setLive(bool live);
     void refresh(bool force = false);
     void scrollToWorkingHours();
+    // The hour grid's scroll position.
+    double scrollTop() const;
+    void setScrollTop(double top);
 
     double headerHeight() const { return m_days == 1 ? 0 : 44; }
     double columnWidth() const;

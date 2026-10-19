@@ -40,6 +40,8 @@ public:
     void show();
     void close();
     void save();
+    // Made again in the session's new language, with what was entered so far.
+    void retranslate();
 
     // A typed time in minutes of the day, or the fallback when it reads as none.
     static int parseTime(const std::string& text, int fallback);
@@ -56,6 +58,7 @@ private:
         int offset;
     };
 
+    void buildContent();
     DateTime start() const;
     DateTime end() const;
     bool isValid() const { return end() >= start(); }

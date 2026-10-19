@@ -8,6 +8,8 @@
 #include "eventdialog.h"
 #include "headerbar.h"
 #include "localedata.h"
+#include "sidebar.h"
+#include "timegridview.h"
 
 #include <base/event_loop.h>
 #include <base/i18n.h>
@@ -48,7 +50,6 @@ CalendarWindow::CalendarWindow(CalendarModel* model, bool restoresSize)
     , m_window(std::make_unique<Window>())
     , m_currentDate(model->today())
 {
-    m_window->setTitle(tr("Calendar"));
     m_window->setMinimumSize({640, 600});
     m_window->resize({1100, 740});
     if (restoresSize)
@@ -57,14 +58,8 @@ CalendarWindow::CalendarWindow(CalendarModel* model, bool restoresSize)
     m_sidebarReveal = sidebarDocked() ? 1 : 0;
     m_dockReveal = sidebarDocked() ? 1 : 0;
 
-    auto root = std::make_unique<CalendarRoot>(this);
-    m_root = root.get();
-    m_window->setContentView(std::move(root));
+    buildContent();
     m_toast = std::make_unique<Toast>(m_window.get());
-    m_root->content()->showView(view());
-    m_root->headerBar()->onSearchChanged = [this](const std::string& text) {
-        m_root->content()->setSearchText(text);
-    };
     m_window->onStatesChanged = [this] { m_root->headerBar()->requestLayout(); };
     m_window->onActiveChanged = [this] { m_root->headerBar()->requestLayout(); };
     // A press on the calendar puts away the sidebar shown over it.
@@ -106,10 +101,76 @@ CalendarWindow::CalendarWindow(CalendarModel* model, bool restoresSize)
     }));
     m_subscriptions.push_back(model->activationRequested.connect([this] { activate(); }));
     m_subscriptions.push_back(model->weekStartChanged.connect([this] { currentDateChanged.emit(); }));
+    m_languageChanged = Application::instance()->languageChanged.connect([this] { retranslate(); });
     installShortcuts();
 }
 
 CalendarWindow::~CalendarWindow() = default;
+
+void CalendarWindow::buildContent()
+{
+    m_window->setTitle(tr("Calendar"));
+    auto root = std::make_unique<CalendarRoot>(this);
+    m_root = root.get();
+    m_window->setContentView(std::move(root));
+    m_root->content()->showView(view());
+    m_root->headerBar()->onSearchChanged = [this](const std::string& text) {
+        m_root->content()->setSearchText(text);
+    };
+}
+
+// The views are made again; the day, the view, the selection, the sidebar,
+// the search and an open event editor with its input stay. Questions close,
+// and the dialogs being typed into stay as they are.
+void CalendarWindow::retranslate()
+{
+    SearchField* search = m_root->headerBar()->searchField();
+    const std::string searchText = search->text();
+    const bool searchFocused = search->hasFocus();
+    const bool viewFocused = m_root->content()->hasFocus();
+    const Date shownMonth = m_root->sidebar()->shownMonth();
+    std::optional<double> scrollTop;
+    if (view() == "day" || view() == "week")
+        scrollTop = static_cast<TimeGridView*>(m_root->content()->currentView())->scrollTop();
+
+    if (m_mainMenu)
+        m_mainMenu->close();
+    m_mainMenu.reset();
+    m_contextMenu.reset();
+    if (m_scopeDialog)
+        m_scopeDialog->close();
+    m_confirmDialog.reset();
+
+    buildContent();
+    search = m_root->headerBar()->searchField();
+    search->setText(searchText);
+    m_root->content()->setSearchText(searchText);
+    m_root->sidebar()->setShownMonth(shownMonth);
+    if (scrollTop)
+        static_cast<TimeGridView*>(m_root->content()->currentView())->setScrollTop(*scrollTop);
+    if (searchFocused)
+        search->setFocus(FocusReason::Keyboard);
+    else if (viewFocused)
+        focusView();
+
+    if (m_editor)
+        m_editor->retranslate();
+    if (m_importDialog) {
+        const std::vector<std::string> files = m_importDialog->files();
+        const int calendar = m_importDialog->calendarIndex();
+        m_importDialog.reset();
+        importFiles(files);
+        m_importDialog->setCalendarIndex(calendar);
+    }
+    if (m_settingsDialog) {
+        m_settingsDialog.reset();
+        openSettings();
+    }
+    if (m_aboutDialog) {
+        m_aboutDialog.reset();
+        openAbout();
+    }
+}
 
 void CalendarWindow::show()
 {

@@ -608,6 +608,59 @@ TEST_F(UiTest, EscapeClosesTheDatePickerBeforeTheEditor)
     EXPECT_FALSE(window.editor());
 }
 
+TEST_F(UiTest, LanguageChangeKeepsWhereTheUserWas)
+{
+    const Date day = Date::currentDate().addDays(3);
+    addEvent("Piano lesson", day, 9 * 60, 60);
+    m_model->setView("week");
+    CalendarWindow& window = open();
+    Window* frame = window.window();
+    const std::vector<EventItem> found = m_model->search("Piano");
+    ASSERT_EQ(found.size(), 1u);
+    window.revealEvent(found.front());
+    window.toggleSidebar();
+    auto* search = static_cast<TextField*>(find(frame, "searchField").front());
+    search->setText("piano");
+    search->onTextChanged();
+    const DateTime start(day, Time(14, 0));
+    window.newEvent(start, start.addSecs(3600), false);
+    EventDialog* editor = window.editor();
+    ASSERT_TRUE(editor);
+    advance(*editor->window());
+    const View* titleBefore = find(editor->window(), "titleField").front();
+    static_cast<TextField*>(find(editor->window(), "titleField").front())->setText("Dentist");
+    advance(*frame, 300);
+    const View* searchBefore = find(frame, "searchField").front();
+
+    Application::instance()->languageChanged.emit();
+    advance(*frame, 300);
+    ASSERT_EQ(find(frame, "searchField").size(), 1u);
+    EXPECT_NE(find(frame, "searchField").front(), searchBefore);
+    EXPECT_EQ(window.view(), "week");
+    EXPECT_EQ(window.currentDate(), day);
+    EXPECT_TRUE(window.isSelected(found.front()));
+    EXPECT_FALSE(m_model->sidebarVisible());
+    EXPECT_TRUE(find(frame, "sidebar").empty());
+    EXPECT_EQ(static_cast<TextField*>(find(frame, "searchField").front())->text(), "piano");
+    const std::vector<View*> panels = find(frame, "searchResults");
+    ASSERT_EQ(panels.size(), 1u);
+    EXPECT_EQ(static_cast<SearchResults*>(panels.front())->results().size(), 1u);
+
+    // The editor stays open with what was typed, in views made again.
+    ASSERT_EQ(window.editor(), editor);
+    advance(*editor->window());
+    const std::vector<View*> titles = find(editor->window(), "titleField");
+    ASSERT_EQ(titles.size(), 1u);
+    EXPECT_NE(titles.front(), titleBefore);
+    EXPECT_EQ(static_cast<TextField*>(titles.front())->text(), "Dentist");
+    editor->save();
+    runPosted();
+    EXPECT_FALSE(window.editor());
+    const std::vector<Occurrence> saved = m_store->occurrences(day, day.addDays(1));
+    ASSERT_EQ(saved.size(), 2u);
+    EXPECT_TRUE(saved[0].summary == "Dentist" || saved[1].summary == "Dentist");
+}
+
 int main(int argc, char** argv)
 {
     testing::InitGoogleTest(&argc, argv);

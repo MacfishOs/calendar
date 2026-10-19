@@ -511,6 +511,17 @@ void TimeGridView::scrollToWorkingHours()
     m_canvas->requestLayout();
 }
 
+double TimeGridView::scrollTop() const
+{
+    return m_pendingScroll.value_or(m_scroll->scrollPosition().y);
+}
+
+void TimeGridView::setScrollTop(double top)
+{
+    m_pendingScroll = top;
+    m_canvas->requestLayout();
+}
+
 void TimeGridView::layout()
 {
     const Theme& theme = Theme::current();

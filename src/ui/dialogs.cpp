@@ -708,6 +708,16 @@ ImportDialog::ImportDialog(Window* parent, CalendarModel* model, std::vector<std
     window()->addShortcut(NoModifier, key::KeypadEnter, [this] { accept(); });
 }
 
+int ImportDialog::calendarIndex() const
+{
+    return m_calendar->currentIndex();
+}
+
+void ImportDialog::setCalendarIndex(int index)
+{
+    m_calendar->setCurrentIndex(index);
+}
+
 void ImportDialog::accept()
 {
     const std::vector<CalendarItem> calendars = m_model->writableCalendars();

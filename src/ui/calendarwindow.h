@@ -150,6 +150,9 @@ private:
     void exportCalendar(const CalendarItem& calendar);
     void installShortcuts();
     void updateSidebarState(bool animate);
+    // The views, which show text.
+    void buildContent();
+    void retranslate();
 
     CalendarModel* m_model;
     std::unique_ptr<cutefish::ui::Window> m_window;
@@ -183,5 +186,6 @@ private:
     std::unique_ptr<cutefish::ui::Toast> m_toast;
 
     std::vector<cutefish::base::Subscription> m_subscriptions;
+    cutefish::base::Subscription m_languageChanged;
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };

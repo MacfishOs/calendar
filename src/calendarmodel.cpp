@@ -14,6 +14,7 @@
 #include <algorithm>
 
 using cutefish::i18n::tr;
+using cutefish::i18n::trNoop;
 
 static const size_t UndoDepth = 20;
 // How far ahead search looks for a repeating event's next occurrence, in days.
@@ -461,7 +462,7 @@ bool CalendarModel::saveEvent(const EventForm& form, int scope)
         if (added.empty())
             return false;
         setDefaultCalendar(calendarId);
-        pushUndo(tr("Undo New Event"), {{added, nullptr, added}});
+        pushUndo(trNoop("Undo New Event"), {{added, nullptr, added}});
         return true;
     }
 
@@ -498,7 +499,7 @@ bool CalendarModel::saveEvent(const EventForm& form, int scope)
     if (CalendarStore::calendarOf(updated) != calendarId)
         updated = m_store->moveEvent(updated, calendarId);
     changes.insert(changes.begin(), {key, before, updated});
-    pushUndo(tr("Undo Edit"), std::move(changes));
+    pushUndo(trNoop("Undo Edit"), std::move(changes));
     return true;
 }
 
@@ -519,14 +520,14 @@ bool CalendarModel::removeEvent(const std::string& key, const std::string& recur
         if (left) {
             if (m_store->updateEvent(key, std::move(changed)).empty())
                 return false;
-            pushUndo(tr("Undo Delete"), {{key, before, key}});
+            pushUndo(trNoop("Undo Delete"), {{key, before, key}});
             return true;
         }
     }
 
     if (!m_store->removeEvent(key))
         return false;
-    pushUndo(tr("Undo Delete"), {{key, before, std::string()}});
+    pushUndo(trNoop("Undo Delete"), {{key, before, std::string()}});
     return true;
 }
 
@@ -555,12 +556,17 @@ bool CalendarModel::moveOccurrence(const std::string& key, const std::string& re
     if (!saveEvent(form, scope))
         return false;
     if (!m_undo.empty())
-        m_undo.back().text = tr("Undo Move");
+        m_undo.back().text = trNoop("Undo Move");
     undoChanged.emit();
     return true;
 }
 
-void CalendarModel::pushUndo(const std::string& text, std::vector<Change> changes)
+std::string CalendarModel::undoText() const
+{
+    return m_undo.empty() ? std::string() : std::string(tr(m_undo.back().text));
+}
+
+void CalendarModel::pushUndo(const char* text, std::vector<Change> changes)
 {
     m_undo.push_back({text, std::move(changes)});
     while (m_undo.size() > UndoDepth)

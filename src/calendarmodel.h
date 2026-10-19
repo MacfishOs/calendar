@@ -152,7 +152,7 @@ public:
     bool sidebarVisible() const { return m_sidebarVisible; }
     void setSidebarVisible(bool visible);
     bool canUndo() const { return !m_undo.empty(); }
-    std::string undoText() const { return m_undo.empty() ? std::string() : m_undo.back().text; }
+    std::string undoText() const;
 
     MonthLayout monthLayout(Date first, int rows, int lanes) const;
     DayLayout dayLayout(Date first, int days, int lanes) const;
@@ -211,12 +211,13 @@ private:
     };
     struct UndoStep
     {
-        std::string text;
+        // Untranslated, so that it is shown in the language of the moment.
+        const char* text;
         std::vector<Change> changes;
     };
 
     EventItem itemFor(const Occurrence& occurrence) const;
-    void pushUndo(const std::string& text, std::vector<Change> changes);
+    void pushUndo(const char* text, std::vector<Change> changes);
     void ensureCalendar();
     void saveHidden();
 

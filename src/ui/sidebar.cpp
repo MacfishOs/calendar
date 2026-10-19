@@ -274,6 +274,12 @@ void Sidebar::layout()
     ScrollView::layout();
 }
 
+void Sidebar::setShownMonth(Date month)
+{
+    m_shownMonth = month;
+    updateMonth();
+}
+
 void Sidebar::updateMonth()
 {
     // The name stands alone, as a heading.

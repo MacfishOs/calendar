@@ -7,6 +7,7 @@
 #include <base/dbus.h>
 #include <base/event_loop.h>
 #include <base/i18n.h>
+#include <base/session_language.h>
 
 #include <clocale>
 
@@ -19,6 +20,7 @@ int main()
     if (!bus || !bus->requestName("org.cutefish.CalendarReminders"))
         return 0;
 
+    cutefish::base::SessionLanguage language(bus);
     CalendarStore store;
     ReminderService service(&store, bus);
     store.loadAsync();

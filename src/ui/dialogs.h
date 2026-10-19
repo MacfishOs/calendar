@@ -145,6 +145,11 @@ class ImportDialog : public SmallDialog
 public:
     ImportDialog(cutefish::ui::Window* parent, CalendarModel* model, std::vector<std::string> files);
 
+    const std::vector<std::string>& files() const { return m_files; }
+    // In the list of writable calendars.
+    int calendarIndex() const;
+    void setCalendarIndex(int index);
+
     std::function<void(const std::vector<std::string>& files, const std::string& calendarId)> onImport;
 
 private:
