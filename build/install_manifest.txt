@@ -1,0 +1,4 @@
+/usr/bin/cutefish-calendar
+/usr/bin/cutefish-calendar-reminders
+/usr/share/applications/cutefish-calendar.desktop
+/etc/xdg/autostart/cutefish-calendar-reminders.desktop

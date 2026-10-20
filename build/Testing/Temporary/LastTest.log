@@ -1,0 +1,289 @@
+Start testing: Oct 20 12:02 IST
+----------------------------------------------------------
+1/4 Testing: calendar_core
+1/4 Test: calendar_core
+Command: "/home/jatin/Documents/development/cutefish-new/calendar/build/tests/calendar-core-tests"
+Directory: /home/jatin/Documents/development/cutefish-new/calendar/build/tests
+"calendar_core" start time: Oct 20 12:02 IST
+Output:
+----------------------------------------------------------
+Running main() from /usr/src/debug/gtest/googletest-1.18.0/googletest/src/gtest_main.cc
+[==========] Running 44 tests from 8 test suites.
+[----------] Global test environment set-up.
+[----------] 2 tests from DateTimeTest
+[ RUN      ] DateTimeTest.CalendarArithmetic
+[       OK ] DateTimeTest.CalendarArithmetic (0 ms)
+[ RUN      ] DateTimeTest.ZonesAndTransitions
+[       OK ] DateTimeTest.ZonesAndTransitions (7 ms)
+[----------] 2 tests from DateTimeTest (7 ms total)
+
+[----------] 17 tests from EventFileTest
+[ RUN      ] EventFileTest.WeeklyAcrossDaylightSaving
+[       OK ] EventFileTest.WeeklyAcrossDaylightSaving (6 ms)
+[ RUN      ] EventFileTest.UntilInUtc
+[       OK ] EventFileTest.UntilInUtc (0 ms)
+[ RUN      ] EventFileTest.ExclusionsAndMovedInstance
+[       OK ] EventFileTest.ExclusionsAndMovedInstance (0 ms)
+[ RUN      ] EventFileTest.InstanceChangedByItsDate
+[       OK ] EventFileTest.InstanceChangedByItsDate (0 ms)
+[ RUN      ] EventFileTest.CancelledInstance
+[       OK ] EventFileTest.CancelledInstance (0 ms)
+[ RUN      ] EventFileTest.AllDayRepeat
+[       OK ] EventFileTest.AllDayRepeat (0 ms)
+[ RUN      ] EventFileTest.WindowsZoneName
+[       OK ] EventFileTest.WindowsZoneName (0 ms)
+[ RUN      ] EventFileTest.CreateRoundTrip
+[       OK ] EventFileTest.CreateRoundTrip (0 ms)
+[ RUN      ] EventFileTest.CustomRuleKept
+[       OK ] EventFileTest.CustomRuleKept (0 ms)
+[ RUN      ] EventFileTest.ChangeOneOccurrence
+[       OK ] EventFileTest.ChangeOneOccurrence (0 ms)
+[ RUN      ] EventFileTest.MoveSeriesShiftsChanges
+[       OK ] EventFileTest.MoveSeriesShiftsChanges (0 ms)
+[ RUN      ] EventFileTest.EndBeforeOccurrence
+[       OK ] EventFileTest.EndBeforeOccurrence (0 ms)
+[ RUN      ] EventFileTest.SplitCountedSeries
+[       OK ] EventFileTest.SplitCountedSeries (0 ms)
+[ RUN      ] EventFileTest.SplitCountedSeriesWithAddedDates
+[       OK ] EventFileTest.SplitCountedSeriesWithAddedDates (0 ms)
+[ RUN      ] EventFileTest.Alarms
+[       OK ] EventFileTest.Alarms (0 ms)
+[ RUN      ] EventFileTest.AlarmsAtASetTime
+[       OK ] EventFileTest.AlarmsAtASetTime (5 ms)
+[ RUN      ] EventFileTest.ImportSplitsByUid
+[       OK ] EventFileTest.ImportSplitsByUid (0 ms)
+[----------] 17 tests from EventFileTest (18 ms total)
+
+[----------] 2 tests from EventLayoutTest
+[ RUN      ] EventLayoutTest.Rows
+[       OK ] EventLayoutTest.Rows (0 ms)
+[ RUN      ] EventLayoutTest.Days
+[       OK ] EventLayoutTest.Days (0 ms)
+[----------] 2 tests from EventLayoutTest (0 ms total)
+
+[----------] 4 tests from StoreTest
+[ RUN      ] StoreTest.UnreadableFileIsNotOverwritten
+[       OK ] StoreTest.UnreadableFileIsNotOverwritten (4 ms)
+[ RUN      ] StoreTest.RoundTrip
+[       OK ] StoreTest.RoundTrip (6 ms)
+[ RUN      ] StoreTest.SeesExternalChanges
+[       OK ] StoreTest.SeesExternalChanges (265 ms)
+[ RUN      ] StoreTest.LoadsAsynchronously
+[       OK ] StoreTest.LoadsAsynchronously (11 ms)
+[----------] 4 tests from StoreTest (289 ms total)
+
+[----------] 4 tests from ModelTest
+[ RUN      ] ModelTest.ScopesAndUndo
+[       OK ] ModelTest.ScopesAndUndo (26 ms)
+[ RUN      ] ModelTest.DragMove
+[       OK ] ModelTest.DragMove (2 ms)
+[ RUN      ] ModelTest.SearchFindsAPastSeriesWithoutItsFirstOccurrence
+[       OK ] ModelTest.SearchFindsAPastSeriesWithoutItsFirstOccurrence (1 ms)
+[ RUN      ] ModelTest.SettingsKeepTheirFormat
+[       OK ] ModelTest.SettingsKeepTheirFormat (0 ms)
+[----------] 4 tests from ModelTest (30 ms total)
+
+[----------] 6 tests from SubscriptionTest
+[ RUN      ] SubscriptionTest.AddressesAreNormalized
+[       OK ] SubscriptionTest.AddressesAreNormalized (0 ms)
+[ RUN      ] SubscriptionTest.FeedNamesItselfAndItsRefresh
+[       OK ] SubscriptionTest.FeedNamesItselfAndItsRefresh (0 ms)
+[ RUN      ] SubscriptionTest.SubscribedCalendarIsReadOnly
+[       OK ] SubscriptionTest.SubscribedCalendarIsReadOnly (2 ms)
+[ RUN      ] SubscriptionTest.ReplacingRewritesOnlyWhatChanged
+[       OK ] SubscriptionTest.ReplacingRewritesOnlyWhatChanged (1 ms)
+[ RUN      ] SubscriptionTest.SubscribesAndRefreshesWhenDue
+[       OK ] SubscriptionTest.SubscribesAndRefreshesWhenDue (52 ms)
+[ RUN      ] SubscriptionTest.WhatIsNoCalendarIsNotSubscribed
+[       OK ] SubscriptionTest.WhatIsNoCalendarIsNotSubscribed (232 ms)
+[----------] 6 tests from SubscriptionTest (288 ms total)
+
+[----------] 1 test from HolidayFeedsTest
+[ RUN      ] HolidayFeedsTest.OwnRegionFirstInTheSessionsLanguage
+[       OK ] HolidayFeedsTest.OwnRegionFirstInTheSessionsLanguage (1 ms)
+[----------] 1 test from HolidayFeedsTest (1 ms total)
+
+[----------] 8 tests from Presets/RepeatPresetTest
+[ RUN      ] Presets/RepeatPresetTest.RoundTrip/daily
+[       OK ] Presets/RepeatPresetTest.RoundTrip/daily (1 ms)
+[ RUN      ] Presets/RepeatPresetTest.RoundTrip/weekdays
+[       OK ] Presets/RepeatPresetTest.RoundTrip/weekdays (0 ms)
+[ RUN      ] Presets/RepeatPresetTest.RoundTrip/weekly
+[       OK ] Presets/RepeatPresetTest.RoundTrip/weekly (0 ms)
+[ RUN      ] Presets/RepeatPresetTest.RoundTrip/monthly
+[       OK ] Presets/RepeatPresetTest.RoundTrip/monthly (0 ms)
+[ RUN      ] Presets/RepeatPresetTest.RoundTrip/yearly
+[       OK ] Presets/RepeatPresetTest.RoundTrip/yearly (0 ms)
+[ RUN      ] Presets/RepeatPresetTest.RoundTrip/dailyCount
+[       OK ] Presets/RepeatPresetTest.RoundTrip/dailyCount (0 ms)
+[ RUN      ] Presets/RepeatPresetTest.RoundTrip/dailyUntil
+[       OK ] Presets/RepeatPresetTest.RoundTrip/dailyUntil (0 ms)
+[ RUN      ] Presets/RepeatPresetTest.RoundTrip/allDayUntil
+[       OK ] Presets/RepeatPresetTest.RoundTrip/allDayUntil (0 ms)
+[----------] 8 tests from Presets/RepeatPresetTest (3 ms total)
+
+[----------] Global test environment tear-down
+[==========] 44 tests from 8 test suites ran. (640 ms total)
+[  PASSED  ] 44 tests.
+<end of output>
+Test time =   0.65 sec
+----------------------------------------------------------
+Test Passed.
+"calendar_core" end time: Oct 20 12:02 IST
+"calendar_core" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/4 Testing: calendar_ui
+2/4 Test: calendar_ui
+Command: "/home/jatin/Documents/development/cutefish-new/calendar/build/tests/calendar-ui-tests"
+Directory: /home/jatin/Documents/development/cutefish-new/calendar/build/tests
+"calendar_ui" start time: Oct 20 12:02 IST
+Output:
+----------------------------------------------------------
+[==========] Running 19 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 18 tests from UiTest
+[ RUN      ] UiTest.EveryViewStepsAndComesBack
+[       OK ] UiTest.EveryViewStepsAndComesBack (293 ms)
+[ RUN      ] UiTest.EventsShowInEveryView
+[       OK ] UiTest.EventsShowInEveryView (39 ms)
+[ RUN      ] UiTest.EditorCreatesEvent
+[       OK ] UiTest.EditorCreatesEvent (94 ms)
+[ RUN      ] UiTest.SearchFindsEvent
+[       OK ] UiTest.SearchFindsEvent (49 ms)
+[ RUN      ] UiTest.SidebarFollowsWidth
+[       OK ] UiTest.SidebarFollowsWidth (669 ms)
+[ RUN      ] UiTest.KeysMoveTheDayAndShortcutsSwitchViews
+[       OK ] UiTest.KeysMoveTheDayAndShortcutsSwitchViews (25 ms)
+[ RUN      ] UiTest.SelectedEventIsEditedAndDeletedFromTheKeyboard
+[       OK ] UiTest.SelectedEventIsEditedAndDeletedFromTheKeyboard (39 ms)
+[ RUN      ] UiTest.DraggingOnTheHoursMarksANewEvent
+[       OK ] UiTest.DraggingOnTheHoursMarksANewEvent (36 ms)
+[ RUN      ] UiTest.ANewEventMarkedToTheLastHourEndsAtMidnight
+[       OK ] UiTest.ANewEventMarkedToTheLastHourEndsAtMidnight (25 ms)
+[ RUN      ] UiTest.DraggingABlockMovesTheEvent
+[       OK ] UiTest.DraggingABlockMovesTheEvent (27 ms)
+[ RUN      ] UiTest.CalendarRowsShowAndHideCalendars
+[       OK ] UiTest.CalendarRowsShowAndHideCalendars (28 ms)
+[ RUN      ] UiTest.RepeatingEventsAskWhichOccurrences
+[       OK ] UiTest.RepeatingEventsAskWhichOccurrences (28 ms)
+[ RUN      ] UiTest.WeekNumbersFollowTheSetting
+[       OK ] UiTest.WeekNumbersFollowTheSetting (27 ms)
+[ RUN      ] UiTest.MiniMonthAndYearViewMoveTheDay
+[       OK ] UiTest.MiniMonthAndYearViewMoveTheDay (66 ms)
+[ RUN      ] UiTest.NewCalendarIsCreatedFromTheSidebar
+[       OK ] UiTest.NewCalendarIsCreatedFromTheSidebar (29 ms)
+[ RUN      ] UiTest.DroppedCalendarFilesAreImported
+[       OK ] UiTest.DroppedCalendarFilesAreImported (27 ms)
+[ RUN      ] UiTest.TypedTimesMoveTheEvent
+[       OK ] UiTest.TypedTimesMoveTheEvent (70 ms)
+[ RUN      ] UiTest.EscapeClosesTheDatePickerBeforeTheEditor
+[       OK ] UiTest.EscapeClosesTheDatePickerBeforeTheEditor (70 ms)
+[----------] 18 tests from UiTest (1649 ms total)
+
+[----------] 1 test from EventDialogTest
+[ RUN      ] EventDialogTest.ReadsTypedTimes
+[       OK ] EventDialogTest.ReadsTypedTimes (0 ms)
+[----------] 1 test from EventDialogTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 19 tests from 2 test suites ran. (1650 ms total)
+[  PASSED  ] 19 tests.
+<end of output>
+Test time =   1.70 sec
+----------------------------------------------------------
+Test Passed.
+"calendar_ui" end time: Oct 20 12:02 IST
+"calendar_ui" time elapsed: 00:00:01
+----------------------------------------------------------
+
+3/4 Testing: calendar_dialogs
+3/4 Test: calendar_dialogs
+Command: "/home/jatin/Documents/development/cutefish-new/calendar/build/tests/calendar-dialogs-tests"
+Directory: /home/jatin/Documents/development/cutefish-new/calendar/build/tests
+"calendar_dialogs" start time: Oct 20 12:02 IST
+Output:
+----------------------------------------------------------
+[==========] Running 14 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 13 tests from DialogsTest
+[ RUN      ] DialogsTest.EditorLaysOutItsCards
+[       OK ] DialogsTest.EditorLaysOutItsCards (132 ms)
+[ RUN      ] DialogsTest.RepeatEndsAfterTheCountTyped
+[       OK ] DialogsTest.RepeatEndsAfterTheCountTyped (120 ms)
+[ RUN      ] DialogsTest.AnEndBeforeTheStartCannotBeSaved
+[       OK ] DialogsTest.AnEndBeforeTheStartCannotBeSaved (126 ms)
+[ RUN      ] DialogsTest.AllDayHidesTheTimesAndListsDayAlerts
+[       OK ] DialogsTest.AllDayHidesTheTimesAndListsDayAlerts (78 ms)
+[ RUN      ] DialogsTest.TheDatePopupPicksADayAndKeepsTheLength
+[       OK ] DialogsTest.TheDatePopupPicksADayAndKeepsTheLength (78 ms)
+[ RUN      ] DialogsTest.ChangingTheRuleOfARepeatingEventAsksOnlyForLaterOnes
+[       OK ] DialogsTest.ChangingTheRuleOfARepeatingEventAsksOnlyForLaterOnes (71 ms)
+[ RUN      ] DialogsTest.TheCalendarDialogRenamesAndRecolours
+[       OK ] DialogsTest.TheCalendarDialogRenamesAndRecolours (25 ms)
+[ RUN      ] DialogsTest.TheImportDialogAddsToTheChosenCalendar
+[       OK ] DialogsTest.TheImportDialogAddsToTheChosenCalendar (22 ms)
+[ RUN      ] DialogsTest.OneFileIsNamedWithoutItsEscapes
+[       OK ] DialogsTest.OneFileIsNamedWithoutItsEscapes (19 ms)
+[ RUN      ] DialogsTest.TheSubscriptionDialogSubscribesOrSaysWhyNot
+[       OK ] DialogsTest.TheSubscriptionDialogSubscribesOrSaysWhyNot (163 ms)
+[ RUN      ] DialogsTest.PublicHolidaysArePickedFromAList
+[       OK ] DialogsTest.PublicHolidaysArePickedFromAList (43 ms)
+[ RUN      ] DialogsTest.ASubscribedEventOpensReadOnly
+[       OK ] DialogsTest.ASubscribedEventOpensReadOnly (39 ms)
+[ RUN      ] DialogsTest.SettingsChangeTheWeek
+[       OK ] DialogsTest.SettingsChangeTheWeek (19 ms)
+[----------] 13 tests from DialogsTest (942 ms total)
+
+[----------] 1 test from EventDialogTimesTest
+[ RUN      ] EventDialogTimesTest.EveryListedTimeReadsBack
+[       OK ] EventDialogTimesTest.EveryListedTimeReadsBack (2 ms)
+[----------] 1 test from EventDialogTimesTest (2 ms total)
+
+[----------] Global test environment tear-down
+[==========] 14 tests from 2 test suites ran. (945 ms total)
+[  PASSED  ] 14 tests.
+<end of output>
+Test time =   1.01 sec
+----------------------------------------------------------
+Test Passed.
+"calendar_dialogs" end time: Oct 20 12:02 IST
+"calendar_dialogs" time elapsed: 00:00:01
+----------------------------------------------------------
+
+4/4 Testing: calendar_reminders
+4/4 Test: calendar_reminders
+Command: "/home/jatin/Documents/development/cutefish-new/calendar/build/tests/calendar-reminders-tests"
+Directory: /home/jatin/Documents/development/cutefish-new/calendar/build/tests
+"calendar_reminders" start time: Oct 20 12:02 IST
+Output:
+----------------------------------------------------------
+Running main() from /usr/src/debug/gtest/googletest-1.18.0/googletest/src/gtest_main.cc
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from ReminderServiceTest
+[ RUN      ] ReminderServiceTest.NotifiesDueAlarms
+/home/jatin/Documents/development/cutefish-new/calendar/tests/reminders_test.cpp:60: Failure
+Value of: server->requestName("org.freedesktop.Notifications")
+  Actual: false
+Expected: true
+
+[  FAILED  ] ReminderServiceTest.NotifiesDueAlarms (1 ms)
+[----------] 1 test from ReminderServiceTest (1 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (1 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] ReminderServiceTest.NotifiesDueAlarms
+
+ 1 FAILED TEST
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Failed.
+"calendar_reminders" end time: Oct 20 12:02 IST
+"calendar_reminders" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 20 12:02 IST

@@ -1,0 +1,6 @@
+calendar_core 1 0.652662
+calendar_ui 1 1.70323
+calendar_dialogs 1 1.01067
+calendar_reminders 0 0
+---
+calendar_reminders

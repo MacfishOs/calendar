@@ -1,0 +1,10 @@
+/home/jatin/Documents/development/cutefish-new/calendar/build/CMakeFiles/calendar-core.dir
+/home/jatin/Documents/development/cutefish-new/calendar/build/CMakeFiles/calendar-ui.dir
+/home/jatin/Documents/development/cutefish-new/calendar/build/CMakeFiles/cutefish-calendar.dir
+/home/jatin/Documents/development/cutefish-new/calendar/build/CMakeFiles/cutefish-calendar-reminders.dir
+/home/jatin/Documents/development/cutefish-new/calendar/build/CMakeFiles/edit_cache.dir
+/home/jatin/Documents/development/cutefish-new/calendar/build/CMakeFiles/rebuild_cache.dir
+/home/jatin/Documents/development/cutefish-new/calendar/build/CMakeFiles/list_install_components.dir
+/home/jatin/Documents/development/cutefish-new/calendar/build/CMakeFiles/install.dir
+/home/jatin/Documents/development/cutefish-new/calendar/build/CMakeFiles/install/local.dir
+/home/jatin/Documents/development/cutefish-new/calendar/build/CMakeFiles/install/strip.dir

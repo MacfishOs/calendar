@@ -6,16 +6,29 @@
 #include "timezones.h"
 #include "uuid.h"
 
+#include <cstring>
 #include <libical/ical.h>
 
 #ifndef ICAL_RECURRENCE_ARRAY_MAX
 #define ICAL_RECURRENCE_ARRAY_MAX 0
 #endif
 
-inline int icaldurationtype_as_int(icaldurationtype d) { return icaldurationtype_as_seconds(d); }
+inline int icaldurationtype_as_int(icaldurationtype d) { return d.weeks * 7 * 86400 + icaldurationtype_as_seconds(d); }
 inline icaldurationtype icaldurationtype_from_int(int s) { return icaldurationtype_from_seconds(s); }
 inline icalcomponent* icalcomponent_new_clone(const icalcomponent* c) { return icalcomponent_clone(c); }
 inline void icalrecurrencetype_clear(icalrecurrencetype* r) { memset(r, 0, sizeof(*r)); }
+
+inline icalproperty* newPropertyRrule(const icalrecurrencetype& rule)
+{
+    icalrecurrencetype* cloned = icalrecurrencetype_clone(const_cast<icalrecurrencetype*>(&rule));
+    return icalproperty_new_rrule(cloned);
+}
+
+inline void setPropertyRrule(icalproperty* prop, const icalrecurrencetype& rule)
+{
+    icalrecurrencetype* cloned = icalrecurrencetype_clone(const_cast<icalrecurrencetype*>(&rule));
+    icalproperty_set_rrule(prop, cloned);
+}
 
 #include <algorithm>
 #include <cstdlib>
@@ -415,9 +428,11 @@ static Repeat repeatOf(icalcomponent* event, const Series& series)
     if (!rulePtr)
         return repeat;
     const icalrecurrencetype& rule = *rulePtr;
-    const auto length = [](const short* array, int size) {
+    const auto length = [](const icalrecurrence_by_data& by, int size) {
+        if (!by.data)
+            return 0;
         int count = 0;
-        while (count < size && array[count] != ICAL_RECURRENCE_ARRAY_MAX)
+        while (count < by.size && count < size && by.data[count] != ICAL_RECURRENCE_ARRAY_MAX)
             ++count;
         return count;
     };
@@ -433,7 +448,7 @@ static Repeat repeatOf(icalcomponent* event, const Series& series)
     const short startDay = short(start.dayOfWeek() % 7 + 1);
     const bool weekdays = days == 5 && [&rule] {
         for (int i = 0; i < 5; ++i) {
-            if (rule.by[ICAL_BY_DAY][i] != ICAL_MONDAY_WEEKDAY + i)
+            if (icalrecurrencetype_day_day_of_week(rule.by[ICAL_BY_DAY].data[i]) != ICAL_MONDAY_WEEKDAY + i)
                 return false;
         }
         return true;
@@ -445,16 +460,16 @@ static Repeat repeatOf(icalcomponent* event, const Series& series)
             repeat.frequency = Repeat::Daily;
         else if ((rule.freq == ICAL_DAILY_RECURRENCE || rule.freq == ICAL_WEEKLY_RECURRENCE) && weekdays)
             repeat.frequency = Repeat::Weekdays;
-        else if (rule.freq == ICAL_WEEKLY_RECURRENCE && (!days || (days == 1 && rule.by[ICAL_BY_DAY][0] == startDay)))
+        else if (rule.freq == ICAL_WEEKLY_RECURRENCE && (!days || (days == 1 && icalrecurrencetype_day_day_of_week(rule.by[ICAL_BY_DAY].data[0]) == startDay)))
             repeat.frequency = Repeat::Weekly;
     }
     if (rule.interval <= 1 && !otherParts && !days) {
         if (rule.freq == ICAL_MONTHLY_RECURRENCE && !months
-                && (!monthDays || (monthDays == 1 && rule.by[ICAL_BY_MONTH_DAY][0] == start.day())))
+                && (!monthDays || (monthDays == 1 && rule.by[ICAL_BY_MONTH_DAY].data[0] == start.day())))
             repeat.frequency = Repeat::Monthly;
         else if (rule.freq == ICAL_YEARLY_RECURRENCE
-                 && (!months || (months == 1 && rule.by[ICAL_BY_MONTH][0] == start.month()))
-                 && (!monthDays || (monthDays == 1 && rule.by[ICAL_BY_MONTH_DAY][0] == start.day())))
+                 && (!months || (months == 1 && rule.by[ICAL_BY_MONTH].data[0] == start.month()))
+                 && (!monthDays || (monthDays == 1 && rule.by[ICAL_BY_MONTH_DAY].data[0] == start.day())))
             repeat.frequency = Repeat::Yearly;
     }
     if (icalcomponent_get_first_property(event, ICAL_RDATE_PROPERTY)
@@ -486,9 +501,9 @@ static icalrecurrencetype ruleFor(const Repeat& repeat, const Series& series)
         break;
     case Repeat::Weekdays:
         rule.freq = ICAL_WEEKLY_RECURRENCE;
+        icalrecur_resize_by(&rule.by[ICAL_BY_DAY], 5);
         for (int i = 0; i < 5; ++i)
-            rule.by[ICAL_BY_DAY][i] = short(ICAL_MONDAY_WEEKDAY + i);
-        rule.by[ICAL_BY_DAY][5] = ICAL_RECURRENCE_ARRAY_MAX;
+            rule.by[ICAL_BY_DAY].data[i] = icalrecurrencetype_encode_day((enum icalrecurrencetype_weekday)(ICAL_MONDAY_WEEKDAY + i), 0);
         break;
     case Repeat::Weekly:
         rule.freq = ICAL_WEEKLY_RECURRENCE;
@@ -863,9 +878,9 @@ FeedInfo EventFile::feedInfo(std::string_view data)
     info.name = trimmed(info.name);
 
     icaldurationtype interval = icaldurationtype_null_duration();
-    if (icalproperty* refresh = icalcomponent_get_first_property(calendar, ICAL_REFRESHINTERVAL_PROPERTY))
+    if (icalproperty* refresh = icalcomponent_get_first_property(calendar, ICAL_REFRESHINTERVAL_PROPERTY)) {
         interval = icalproperty_get_refreshinterval(refresh);
-    else if (!xTtl.empty())
+    } else if (!xTtl.empty())
         interval = icaldurationtype_from_string(trimmed(xTtl).c_str());
     if (!icaldurationtype_is_bad_duration(interval) && !icaldurationtype_is_null_duration(interval))
         info.refreshSeconds = std::max(0, icaldurationtype_as_int(interval));
@@ -1215,7 +1230,7 @@ void EventFile::setData(const EventData& data)
             removeProperties(event, ICAL_RDATE_PROPERTY);
         else {
             icalrecurrencetype r = ruleFor(data.repeat, after);
-            icalcomponent_add_property(event, icalproperty_new_rrule(&r));
+            icalcomponent_add_property(event, newPropertyRrule(r));
         }
     }
     if (!frequencyChanged && !kindChanged && !before.start.isNull()) {
@@ -1261,7 +1276,7 @@ void EventFile::setData(const EventData& data)
                 ending.until = repeat.until;
                 ending.frequency = Repeat::Daily;
                 rule.until = ruleFor(ending, after).until;
-                icalproperty_set_rrule(property, &rule);
+                setPropertyRrule(property, rule);
             }
         }
     }
@@ -1373,7 +1388,7 @@ bool EventFile::endBefore(const std::string& recurrenceKey)
             if (zone.kind == Zone::Utc)
                 rule.until.zone = icaltimezone_get_utc_timezone();
         }
-        icalproperty_set_rrule(property, &rule);
+        setPropertyRrule(property, rule);
     }
 
     // What came after it belongs to the part that was cut off.
@@ -1473,7 +1488,7 @@ std::unique_ptr<EventFile> EventFile::splitAt(const std::string& recurrenceKey, 
         icalrecurrencetype rule = *rulePtr;
         if (rule.count > 0) {
             rule.count = std::max(1, rule.count - before);
-            icalproperty_set_rrule(property, &rule);
+            setPropertyRrule(property, rule);
         }
     }
     removeProperties(restEvent, ICAL_CREATED_PROPERTY);
