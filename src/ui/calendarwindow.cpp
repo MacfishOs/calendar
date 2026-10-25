@@ -21,6 +21,7 @@
 #include <ui/keys.h>
 #include <ui/menu.h>
 #include <ui/search_field.h>
+#include <ui/theme.h>
 #include <ui/toast.h>
 #include <ui/window.h>
 
@@ -54,6 +55,12 @@ CalendarWindow::CalendarWindow(CalendarModel* model, bool restoresSize)
     m_window->resize({1100, 740});
     if (restoresSize)
         m_window->setRestoresSize("Main");
+
+    const Theme& theme = Theme::current();
+    Color winBg = theme.darkMode ? Color::fromArgb(0x9018181C) : Color::fromArgb(0x90F2F2F7);
+    m_window->setBackgroundColor(winBg);
+    m_window->setBackgroundBlur({0, 0, 1100, 740}, theme.windowRadius);
+
     m_wasNarrow = narrow();
     m_sidebarReveal = sidebarDocked() ? 1 : 0;
     m_dockReveal = sidebarDocked() ? 1 : 0;

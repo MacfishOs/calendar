@@ -209,6 +209,7 @@ void CalendarRoot::layout()
 void CalendarRoot::paint(Painter& painter)
 {
     const double x = CalendarWindow::SidebarWidth * m_window->dockReveal();
+    painter.fillRect({0, 0, x, geometry().height}, Style::withAlpha(Theme::current().background, 0.4));
     painter.fillRect({x, 0, geometry().width - x, geometry().height}, Theme::current().secondBackground);
 }
 

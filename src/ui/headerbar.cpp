@@ -139,14 +139,8 @@ void HeaderBar::layout()
     const bool overlay = m_window->sidebarOverlay();
 
     // The toggle ends at the sidebar's edge.
-    double x = docked ? 20 : 12;
-    m_title->setVisible(docked);
-    m_title->setColor(window && window->isActive() ? theme.text : theme.disabledText);
-    if (docked) {
-        const double width = CalendarWindow::SidebarWidth - 20 - 12 - ButtonSize - 12;
-        m_title->setGeometry({x, 0, width, geometry().height});
-        x += width + 12;
-    }
+    double x = 12;
+    m_title->setVisible(false);
     m_sidebarButton->setChecked(overlay);
     m_sidebarButton->setGeometry({x, top, ButtonSize, ButtonSize});
     const double startEnd = x + ButtonSize;
