@@ -7,13 +7,13 @@
 #include <base/dbus.h>
 #include <base/event_loop.h>
 #include <base/i18n.h>
+#include <base/locale.h>
 #include <base/session_language.h>
 
-#include <clocale>
 
 int main()
 {
-    std::setlocale(LC_ALL, "");
+    cutefish::base::Locale::setProcessLocale();
     cutefish::i18n::setDomain("cutefish-calendar");
     cutefish::base::EventLoop loop;
     cutefish::base::dbus::Connection* bus = cutefish::base::dbus::Connection::session(&loop);
